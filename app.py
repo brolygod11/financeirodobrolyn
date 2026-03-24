@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 from dateutil.relativedelta import relativedelta
-import google.generativeai as genai
+from google import genai
 import firebase_admin
 from firebase_admin import credentials, db
 
@@ -104,6 +104,8 @@ if not user_data.get("accounts"):
         acc_balance = st.number_input("Saldo Atual Real (R$)", value=0.0, step=10.0)
         submitted = st.form_submit_button("Criar Conta e Entrar")
         if submitted and acc_name:
+            if "accounts" not in user_data:
+                user_data["accounts"] = []
             user_data["accounts"].append({"id": 1, "name": acc_name, "initial_balance": acc_balance})
             save_db(db_main)
             st.rerun()
@@ -116,13 +118,11 @@ def calculate_real_balance(account_name):
     balance = acc["initial_balance"]
     for t in user_data.get("transactions", []):
         if t["account"] == account_name and t["status"] == "Paid" and not t.get("ignoreBalance", False):
-            # Compatibilidade com "Income" antigo e "ENTRADA" novo
             balance += t["amount"] if t["type"] in ["Income", "ENTRADA"] else -t["amount"]
     return balance
 
 global_balance = sum(calculate_real_balance(a["name"]) for a in user_data["accounts"])
 
-# ENTROU / SAIU ALLTIME
 entrou_alltime = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Income", "ENTRADA"] and t["status"] == "Paid")
 saiu_alltime = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"])
 
@@ -144,7 +144,7 @@ with tabs[0]:
     st.subheader("Últimas Transações")
     if user_data.get("transactions"):
         df_recent = pd.DataFrame(user_data["transactions"]).tail(100)[["date", "description", "account", "type", "amount", "status"]]
-        st.dataframe(df_recent, use_container_width=True)
+        st.dataframe(df_recent, width="stretch") # Corrigido o aviso do Streamlit aqui
     else:
         st.write("Nenhuma transação registrada.")
 
@@ -156,40 +156,66 @@ with tabs[1]:
     for i, t in enumerate(filtered_t):
         col_info, col_btn = st.columns([8, 2])
         col_info.write(f"**{t['date']}** | {t['description']} | {t['account']} | {format_brl(t['amount'])}")
-        status_color = "🟢 Pago" if t["status"] == "Paid" else "🔴 Pendente"
+        status_color = "🟢 Pago/Recebido" if t["status"] == "Paid" else "🔴 Pendente"
         if col_btn.button(status_color, key=f"status_{t['id']}_{i}"):
             t["status"] = "Unpaid" if t["status"] == "Paid" else "Paid"
             save_db(db_main)
             st.rerun()
 
-# 3. Nova Transação
+# 3. Nova Transação (Reestruturada para Funcionar Dinamicamente)
 with tabs[2]:
+    # A escolha fica FORA do formulário para a tela atualizar na hora
+    t_type = st.radio("Tipo de Lançamento", ["SAIDA", "ENTRADA"], horizontal=True)
+    
     with st.form("new_transaction"):
-        t_type = st.radio("Tipo", ["SAIDA", "ENTRADA"], horizontal=True)
         t_acc = st.selectbox("Conta", [a["name"] for a in user_data["accounts"]])
-        t_desc = st.text_input("Descrição")
-        t_val = st.number_input("Valor (R$)", min_value=0.01, step=10.0)
-        t_date = st.date_input("Data da 1ª Parcela")
-        t_installments = st.number_input("Número de Parcelas", min_value=1, value=1)
-        t_status = st.selectbox("Status", ["Paid", "Unpaid"])
-        t_credit = st.checkbox("Compra no Cartão de Crédito") if t_type == "SAIDA" else False
         
-        if st.form_submit_button("Salvar Transação"):
+        # UI muda dependendo da escolha
+        if t_type == "SAIDA":
+            t_desc = st.text_input("Descrição da Despesa")
+            t_method = st.selectbox("Forma de Pagamento", ["PIX", "Cartão de Débito", "Cartão de Crédito"])
+            t_val = st.number_input("Valor (R$)", min_value=0.01, step=10.0)
+            t_date = st.date_input("Data da 1ª Parcela")
+            t_installments = st.number_input("Número de Parcelas", min_value=1, value=1)
+            t_status = st.selectbox("Status", ["Paid", "Unpaid"], format_func=lambda x: "Pago" if x == "Paid" else "Pendente")
+        else:
+            t_desc = st.text_input("Nome de quem enviou (Origem)")
+            t_method = "Recebimento" # Invisível para o usuário, usado apenas internamente
+            t_val = st.number_input("Valor Recebido (R$)", min_value=0.01, step=10.0)
+            t_date = st.date_input("Data do Recebimento")
+            t_installments = 1
+            t_status = st.selectbox("Status", ["Paid", "Unpaid"], format_func=lambda x: "Recebido" if x == "Paid" else "Pendente")
+        
+        if st.form_submit_button("Salvar Lançamento"):
             base_date = t_date
             for i in range(t_installments):
-                desc = f"{t_desc} ({i+1}/{t_installments})" if t_installments > 1 else t_desc
+                # Anexa o número da parcela se for maior que 1
+                desc_final = f"{t_desc} ({i+1}/{t_installments})" if t_installments > 1 else t_desc
+                # Adiciona a forma de pagamento no nome para ficar visual na tabela
+                desc_with_method = f"[{t_method}] {desc_final}" if t_type == "SAIDA" else desc_final
+                
+                # Regra de Limite de Crédito
+                is_credit = True if (t_type == "SAIDA" and t_method == "Cartão de Crédito") else False
+                
                 new_t = {
                     "id": len(user_data.get("transactions", [])) + 1,
-                    "type": t_type, "account": t_acc, "description": desc,
-                    "amount": t_val, "date": base_date.strftime("%Y-%m-%d"),
-                    "status": t_status, "is_credit": t_credit, "ignoreBalance": False
+                    "type": t_type, 
+                    "account": t_acc, 
+                    "description": desc_with_method,
+                    "amount": t_val, 
+                    "date": base_date.strftime("%Y-%m-%d"),
+                    "status": t_status, 
+                    "is_credit": is_credit, 
+                    "ignoreBalance": False
                 }
+                
                 if "transactions" not in user_data:
                     user_data["transactions"] = []
                 user_data["transactions"].append(new_t)
                 base_date += relativedelta(months=1)
+                
             save_db(db_main)
-            st.success("Transação salva!")
+            st.success("Lançamento salvo com sucesso!")
             st.rerun()
 
 # 4. Contas
@@ -275,16 +301,22 @@ with tabs[6]:
     st.markdown("### IA Conselheira Financeira")
     api_key = st.text_input("Sua Chave API do Google Gemini", type="password")
     if api_key and st.button("Pedir Plano de Ação"):
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-pro')
-        prompt = f"Saldo: R$ {global_balance}. Entrou All-Time: R$ {entrou_alltime}. Saiu All-Time: R$ {saiu_alltime}. Metas: {user_data.get('goals', [])}. Crie um plano de ação."
-        st.write(model.generate_content(prompt).text)
+        try:
+            # Corrigido o código para a nova biblioteca google-genai
+            client = genai.Client(api_key=api_key)
+            prompt = f"Saldo: R$ {global_balance}. Entrou All-Time: R$ {entrou_alltime}. Saiu All-Time: R$ {saiu_alltime}. Metas: {user_data.get('goals', [])}. Crie um plano de ação."
+            response = client.models.generate_content(model='gemini-1.5-pro', contents=prompt)
+            st.write(response.text)
+        except Exception as e:
+            st.error(f"Erro ao consultar a IA: {e}")
 
 # 8. Configurações
 with tabs[7]:
     st.subheader("Configurações da Conta")
-    new_limit = st.number_input("Limite Total de Crédito (R$)", value=user_data["settings"]["credit_limit"])
+    new_limit = st.number_input("Limite Total de Crédito (R$)", value=user_data.get("settings", {}).get("credit_limit", 5000.0))
     if st.button("Salvar Configurações"):
+        if "settings" not in user_data:
+            user_data["settings"] = {}
         user_data["settings"]["credit_limit"] = new_limit
         save_db(db_main)
         st.success("Atualizado!")
@@ -292,7 +324,7 @@ with tabs[7]:
         
     st.markdown("---")
     st.subheader("🚨 Zona de Perigo")
-    st.warning("Isso apagará todas as transações e metas da SUA conta. Seu saldo inicial de R$ 0,00 será mantido.")
+    st.warning("Isso apagará todas as transações e metas da SUA conta.")
     if st.button("Zerar Minhas Transações e Metas"):
         user_data["transactions"] = []
         user_data["goals"] = []

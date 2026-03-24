@@ -9,7 +9,6 @@ from firebase_admin import credentials, db
 st.set_page_config(page_title="Financeiro Sayjins", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Sistema de Banco de Dados Cloud (Firebase) ---
-# Inicializa a conexão com o Firebase apenas uma vez
 if not firebase_admin._apps:
     try:
         cred = credentials.Certificate(dict(st.secrets["firebase_key"]))
@@ -34,11 +33,9 @@ def save_db(db_main):
 def format_brl(value):
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# Carrega o banco principal da nuvem
 if 'db_main' not in st.session_state:
     st.session_state.db_main = load_db()
 
-# Variáveis de sessão para controle de login
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = ""
@@ -119,16 +116,17 @@ def calculate_real_balance(account_name):
     balance = acc["initial_balance"]
     for t in user_data.get("transactions", []):
         if t["account"] == account_name and t["status"] == "Paid" and not t.get("ignoreBalance", False):
-            balance += t["amount"] if t["type"] == "Income" else -t["amount"]
+            # Compatibilidade com "Income" antigo e "ENTRADA" novo
+            balance += t["amount"] if t["type"] in ["Income", "ENTRADA"] else -t["amount"]
     return balance
 
 global_balance = sum(calculate_real_balance(a["name"]) for a in user_data["accounts"])
 
 # ENTROU / SAIU ALLTIME
-entrou_alltime = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] == "Income" and t["status"] == "Paid")
-saiu_alltime = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] == "Expense")
+entrou_alltime = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Income", "ENTRADA"] and t["status"] == "Paid")
+saiu_alltime = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"])
 
-unpaid_credit = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] == "Expense" and t.get("is_credit") and t["status"] == "Unpaid")
+unpaid_credit = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"] and t.get("is_credit") and t["status"] == "Unpaid")
 available_credit = user_data["settings"]["credit_limit"] - unpaid_credit
 
 # --- Abas (Tabs) ---
@@ -167,14 +165,14 @@ with tabs[1]:
 # 3. Nova Transação
 with tabs[2]:
     with st.form("new_transaction"):
-        t_type = st.radio("Tipo", ["Expense", "Income"], horizontal=True)
+        t_type = st.radio("Tipo", ["SAIDA", "ENTRADA"], horizontal=True)
         t_acc = st.selectbox("Conta", [a["name"] for a in user_data["accounts"]])
         t_desc = st.text_input("Descrição")
         t_val = st.number_input("Valor (R$)", min_value=0.01, step=10.0)
         t_date = st.date_input("Data da 1ª Parcela")
         t_installments = st.number_input("Número de Parcelas", min_value=1, value=1)
         t_status = st.selectbox("Status", ["Paid", "Unpaid"])
-        t_credit = st.checkbox("Compra no Cartão de Crédito") if t_type == "Expense" else False
+        t_credit = st.checkbox("Compra no Cartão de Crédito") if t_type == "SAIDA" else False
         
         if st.form_submit_button("Salvar Transação"):
             base_date = t_date
@@ -238,7 +236,7 @@ with tabs[5]:
                     except ValueError:
                         amount_val = 0.0
                         
-                    t_type = "Expense" if amount_val < 0 else "Income"
+                    t_type = "SAIDA" if amount_val < 0 else "ENTRADA"
                     
                     hist = str(row.get('Histórico', ''))
                     desc = str(row.get('Descrição', ''))
@@ -284,9 +282,4 @@ with tabs[6]:
 
 # 8. Configurações
 with tabs[7]:
-    new_limit = st.number_input("Limite Total de Crédito (R$)", value=user_data["settings"]["credit_limit"])
-    if st.button("Salvar Configurações"):
-        user_data["settings"]["credit_limit"] = new_limit
-        save_db(db_main)
-        st.success("Atualizado!")
-        st.rerun()
+    st.subheader("Config

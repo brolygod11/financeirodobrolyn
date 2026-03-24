@@ -282,4 +282,20 @@ with tabs[6]:
 
 # 8. Configurações
 with tabs[7]:
-    st.subheader("Config
+    st.subheader("Configurações da Conta")
+    new_limit = st.number_input("Limite Total de Crédito (R$)", value=user_data["settings"]["credit_limit"])
+    if st.button("Salvar Configurações"):
+        user_data["settings"]["credit_limit"] = new_limit
+        save_db(db_main)
+        st.success("Atualizado!")
+        st.rerun()
+        
+    st.markdown("---")
+    st.subheader("🚨 Zona de Perigo")
+    st.warning("Isso apagará todas as transações e metas da SUA conta. Seu saldo inicial de R$ 0,00 será mantido.")
+    if st.button("Zerar Minhas Transações e Metas"):
+        user_data["transactions"] = []
+        user_data["goals"] = []
+        save_db(db_main)
+        st.success("Dados da sua conta zerados com sucesso!")
+        st.rerun()

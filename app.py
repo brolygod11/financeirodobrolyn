@@ -61,14 +61,14 @@ if not st.session_state.logged_in:
     st.markdown("<h1 style='text-align: center; color: #ff6600;'>⚡ Financeiro Sayjins</h1>", unsafe_allow_html=True)
     t1, t2 = st.tabs(["Entrar", "Criar Conta"])
     with t1:
-        with st.form("l"):
+        with st.form("login_f"):
             u = st.text_input("Usuário"); p = st.text_input("Senha", type="password")
             if st.form_submit_button("Entrar"):
                 if u in db_main.get("users", {}) and db_main["users"][u]["password"] == p:
                     st.session_state.logged_in = True; st.session_state.username = u; st.rerun()
                 else: st.error("Erro!")
     with t2:
-        with st.form("r"):
+        with st.form("reg_f"):
             nu = st.text_input("Novo Usuário"); np = st.text_input("Nova Senha", type="password")
             if st.form_submit_button("Criar"):
                 if nu and np:
@@ -93,6 +93,11 @@ global_balance = get_balance()
 today = datetime.date.today()
 str_month = today.strftime("%Y-%m")
 
+# Cálculo para previsão de metas (Sobra Média)
+paid_in = sum(t["amount"] for t in u_data["transactions"] if t["type"] == "ENTRADA" and t["status"] == "Paid")
+paid_out = sum(t["amount"] for t in u_data["transactions"] if t["type"] == "SAIDA" and t["status"] == "Paid")
+avg_savings = max(0, (paid_in - paid_out) / max(1, (today.year - 2024)*12 + today.month))
+
 # --- NAVEGAÇÃO ---
 st.markdown(f"<p style='text-align:center;'>Sayjin: <b>{u_name}</b></p>", unsafe_allow_html=True)
 tabs = st.tabs(["📊 Painel", "💸 Transf.", "➕ Lançar", "🎯 Metas", "⚙️ Extra"])
@@ -100,7 +105,6 @@ tabs = st.tabs(["📊 Painel", "💸 Transf.", "➕ Lançar", "🎯 Metas", "⚙
 # 1. PAINEL
 with tabs[0]:
     f_mes = st.text_input("Mês Filtro (YYYY-MM)", value=str_month)
-    # Soma "Em Aberto" apenas do mês filtrado
     aberto = sum(t["amount"] for t in u_data["transactions"] if t["type"] == "SAIDA" and t["status"] == "Unpaid" and t["date"].startswith(f_mes))
     
     c1, c2 = st.columns(2)
@@ -136,7 +140,6 @@ with tabs[2]:
                 save_db(db_main); st.rerun()
 
     with m_pag:
-        if not u_data["fixed_expenses"]: st.info("Crie uma categoria em 'Nova Fixa'")
         for fixa in u_data["fixed_expenses"]:
             with st.expander(f"📁 {fixa['name']}"):
                 fv = st.number_input("Valor R$", key=f"v_{fixa['id']}")
@@ -146,15 +149,14 @@ with tabs[2]:
                         "id": len(u_data["transactions"])+1, "type": "SAIDA", "account": u_data["accounts"][0]["name"],
                         "description": f"[Fixo] {fixa['name']}", "amount": fv, "date": fd.strftime("%Y-%m-%d"), "status": "Unpaid"
                     })
-                    save_db(db_main); st.success("Lançado em Aberto!"); st.rerun()
+                    save_db(db_main); st.success("Lançado!"); st.rerun()
                 
-                # Histórico interno da gaveta
                 st.write("---")
                 hist = [t for t in u_data["transactions"] if t["description"] == f"[Fixo] {fixa['name']}"]
                 for t in sorted(hist, key=lambda x: x['date'], reverse=True):
                     col_a, col_b = st.columns([3,1])
-                    status_icon = "🔴" if t["status"] == "Unpaid" else "🟢"
-                    col_a.write(f"{status_icon} {t['date']} | {format_brl(t['amount'])}")
+                    icon = "🔴" if t["status"] == "Unpaid" else "🟢"
+                    col_a.write(f"{icon} {t['date']} | {format_brl(t['amount'])}")
                     if t["status"] == "Unpaid":
                         if col_b.button("Pagar", key=f"p_{t['id']}"):
                             t["status"] = "Paid"; save_db(db_main); st.rerun()
@@ -184,13 +186,22 @@ with tabs[3]:
     if st.session_state.get("nm"):
         with st.form("fm"):
             nn = st.text_input("Nome"); vv = st.number_input("Alvo")
-            if st.form_submit_button("Salvar"):
+            if st.form_submit_button("Salvar Meta"):
                 u_data.setdefault("goals", []).append({"name": nn, "target": vv, "status": "Active"})
                 save_db(db_main); st.session_state.nm = False; st.rerun()
+                
     for i, g in enumerate(u_data.get("goals", [])):
         if g.get("status", "Active") == "Active":
+            # FIX AQUI: max(0.0, ...) garante que o progresso nunca seja negativo
+            progress = max(0.0, min(global_balance / g["target"], 1.0)) if g["target"] > 0 else 0.0
             st.write(f"**{g['name']}**")
-            st.progress(min(global_balance/g["target"], 1.0) if g["target"] > 0 else 0)
+            st.progress(progress)
+            st.caption(f"{format_brl(global_balance)} / {format_brl(g['target'])}")
+            
+            if global_balance < g["target"] and avg_savings > 0:
+                meses = int((g["target"] - global_balance) / avg_savings) + 1
+                st.caption(f"⏱️ Previsão: ~{meses} meses")
+                
             if st.button("✅ Bateu!", key=f"m_{i}"):
                 g["status"] = "Achieved"; save_db(db_main); st.rerun()
 

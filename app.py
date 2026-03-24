@@ -6,6 +6,19 @@ import datetime
 from dateutil.relativedelta import relativedelta
 import google.generativeai as genai
 
+if "senha" not in st.session_state:
+    st.session_state.senha = False
+
+if not st.session_state.senha:
+    senha_digitada = st.text_input("Digite a senha de acesso:", type="password")
+    if st.button("Entrar"):
+        if senha_digitada == st.secrets["senha_acesso"]:
+            st.session_state.senha = True
+            st.rerun()
+        else:
+            st.error("Senha incorreta!")
+    st.stop()
+
 # Configuração da Página
 st.set_page_config(page_title="Financeiro Sayjins", layout="wide", initial_sidebar_state="collapsed")
 

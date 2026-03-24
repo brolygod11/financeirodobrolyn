@@ -152,19 +152,40 @@ def calculate_real_balance(account_name):
     if not acc: return 0.0
     balance = acc["initial_balance"]
     for t in db["transactions"]:
+        # O Saldo Real da conta CONTINUA ignorando os CSVs para não desalinhar sua grana
         if t["account"] == account_name and t["status"] == "Paid" and not t.get("ignoreBalance", False):
             balance += t["amount"] if t["type"] == "Income" else -t["amount"]
     return balance
 
 global_balance = sum(calculate_real_balance(a["name"]) for a in db["accounts"])
-all_time_income = sum(t["amount"] for t in db["transactions"] if t["type"] == "Income" and t["status"] == "Paid" and not t.get("ignoreBalance", False))
-all_time_expense = sum(t["amount"] for t in db["transactions"] if t["type"] == "Expense" and t["status"] == "Paid" and not t.get("ignoreBalance", False))
+
+# ENTROU ALLTIME: Soma todas as entradas (Income), incluindo as dos CSVs
+entrou_alltime = sum(t["amount"] for t in db["transactions"] if t["type"] == "Income" and t["status"] == "Paid")
+
+# SAIU ALLTIME: Soma todas as despesas (Expense), incluindo CSVs, pagas e parceladas (Unpaid)
+saiu_alltime = sum(t["amount"] for t in db["transactions"] if t["type"] == "Expense")
+
 unpaid_credit = sum(t["amount"] for t in db["transactions"] if t["type"] == "Expense" and t["is_credit"] and t["status"] == "Unpaid")
 available_credit = db["settings"]["credit_limit"] - unpaid_credit
 
 # --- Abas (Tabs) ---
 st.title("Financeiro Sayjins ⚡")
 tabs = st.tabs(["Dashboard", "Transações", "Nova Transação", "Contas", "Metas", "Importar CSV", "AI Advisor", "Configurações"])
+
+# 1. Dashboard
+with tabs[0]:
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Saldo Global Atual", format_brl(global_balance))
+    col2.metric("ENTROU ALLTIME", format_brl(entrou_alltime)) # Atualizado!
+    col3.metric("SAIU ALLTIME", format_brl(saiu_alltime))     # Atualizado!
+    col4.metric("Limite de Crédito Disponível", format_brl(available_credit))
+    
+    st.subheader("Últimas Transações")
+    if db["transactions"]:
+        df_recent = pd.DataFrame(db["transactions"]).tail(100)[["date", "description", "account", "type", "amount", "status"]]
+        st.dataframe(df_recent, use_container_width=True)
+    else:
+        st.write("Nenhuma transação registrada.")
 
 # 1. Dashboard
 with tabs[0]:
@@ -245,59 +266,60 @@ with tabs[4]:
         st.progress(progress)
 
 # 6. Importar CSV
-# 6. Importar CSV
 with tabs[5]:
-    st.info("Importa CSV padrão Banco Inter. As transações não alterarão o saldo real (ignoreBalance = True).")
+    st.info("Importa CSV padrão Banco Inter. Atualizará o ENTROU/SAIU All-Time sem alterar seu saldo real da conta.")
     uploaded_files = st.file_uploader("Escolha os arquivos CSV", type="csv", accept_multiple_files=True)
     if uploaded_files and st.button("Processar Arquivos"):
         for file in uploaded_files:
             try:
-                # O skiprows=5 ignora o cabeçalho do Inter e vai direto pra tabela
+                # Pula as 5 linhas iniciais do Inter e lê a tabela
                 df = pd.read_csv(file, encoding='utf-8', sep=';', skiprows=5)
+                # Remove espaços em branco ocultos nos nomes das colunas
+                df.columns = df.columns.str.strip()
                 
+                count_imported = 0
                 for _, row in df.iterrows():
-                    # Formata o valor removendo pontos e trocando vírgula por ponto (Padrão BR)
+                    # Ignora linhas vazias no final do arquivo
+                    if pd.isna(row.get('Data Lançamento')):
+                        continue
+                        
                     val_str = str(row.get('Valor', '0')).replace('.', '').replace(',', '.')
-                    
                     try:
                         amount_val = float(val_str)
                     except ValueError:
                         amount_val = 0.0
                         
-                    # Se o valor for negativo, é Despesa. Se for positivo, é Receita.
+                    # Negativos são Expense, Positivos são Income
                     t_type = "Expense" if amount_val < 0 else "Income"
                     
-                    # Junta o Histórico e a Descrição (ignorando valores nulos 'nan')
                     hist = str(row.get('Histórico', ''))
-                    desc = str(row.get('Descrição', 'nan'))
-                    desc = "" if desc == "nan" else desc
+                    desc = str(row.get('Descrição', ''))
+                    desc = "" if desc.lower() == "nan" else desc
                     full_desc = f"{hist} {desc}".strip()
                     
-                    # Converte a data do Inter (DD/MM/YYYY) para o padrão do App (YYYY-MM-DD)
                     raw_date = str(row.get('Data Lançamento', ''))
                     try:
-                        parsed_date = datetime.datetime.strptime(raw_date, "%d/%m/%Y").strftime("%Y-%m-%d")
+                        parsed_date = datetime.datetime.strptime(raw_date.strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
                     except ValueError:
                         parsed_date = raw_date
                         
-                    # Salva no banco de dados
                     db["transactions"].append({
                         "id": len(db["transactions"]) + 1,
                         "type": t_type,
                         "account": db["accounts"][0]["name"] if db["accounts"] else "Importada",
                         "description": full_desc if full_desc else "CSV Import",
-                        "amount": abs(amount_val), # Guarda o valor sempre positivo no banco
+                        "amount": abs(amount_val),
                         "date": parsed_date if parsed_date else str(datetime.date.today()),
                         "status": "Paid", 
                         "is_credit": False, 
                         "ignoreBalance": True
                     })
+                    count_imported += 1
                     
                 save_db(st.session_state.db_main)
-                st.success(f"Arquivo '{file.name}' processado com sucesso!")
+                st.success(f"Arquivo '{file.name}' processado! {count_imported} transações importadas.")
             except Exception as e:
                 st.error(f"Erro ao ler arquivo '{file.name}': {e}")
-
 # 7. AI Advisor
 with tabs[6]:
     st.markdown("### IA Conselheira Financeira")

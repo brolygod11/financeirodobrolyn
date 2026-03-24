@@ -8,7 +8,7 @@ from firebase_admin import credentials, db
 
 st.set_page_config(page_title="Financeiro Sayjins", layout="centered", initial_sidebar_state="collapsed")
 
-# --- CUSTOM CSS (Tema Dark & Laranja Sayjin + Cores Dinâmicas) ---
+# --- CUSTOM CSS (Tema Dark & Laranja Sayjin) ---
 st.markdown("""
     <style>
     .stApp { background-color: #0e0e0e; color: #ffffff; }
@@ -127,9 +127,8 @@ for t in user_data.get("transactions", []):
         if t["date"].startswith(str_month): totals[t_type]["mes"] += amt
         if t["date"].startswith(str_year): totals[t_type]["ano"] += amt
 
-# Calculo Metas (Média Mensal)
 net_savings = totals["ENTRADA"]["all"] - sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"] and t["status"] == "Paid")
-months_active = max(1, (today.year - 2024) * 12 + today.month - 1) # Simplificado para evitar erro com datas vazias
+months_active = max(1, (today.year - 2024) * 12 + today.month - 1)
 avg_monthly_savings = net_savings / months_active
 
 # --- NAVEGAÇÃO MOBILE-FRIENDLY ---
@@ -139,13 +138,11 @@ tabs = st.tabs(["📊 Painel", "💸 Transf.", "➕ Lançar", "🎯 Metas", "�
 # 1. DASHBOARD (PAINEL)
 with tabs[0]:
     filtro_mes_painel = st.text_input("Filtro de Mês (YYYY-MM)", value=str_month, key="filtro_painel")
-    
-    contas_aberto_mes = sum(t["amount"] for t in user_data.get("transactions", []) 
-                            if t["type"] in ["Expense", "SAIDA"] and t["status"] == "Unpaid" and t["date"].startswith(filtro_mes_painel))
+    contas_aberto_mes = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"] and t["status"] == "Unpaid" and t["date"].startswith(filtro_mes_painel))
     
     col1, col2 = st.columns(2)
-    with col1: custom_card("SALDO GLOBAL ATUAL", format_brl(global_balance), "#007BFF", "#3399ff") # Azul
-    with col2: custom_card(f"EM ABERTO ({filtro_mes_painel})", format_brl(contas_aberto_mes), "#ffc107", "#ffcd39") # Amarelo
+    with col1: custom_card("SALDO GLOBAL", format_brl(global_balance), "#007BFF", "#3399ff")
+    with col2: custom_card(f"EM ABERTO ({filtro_mes_painel})", format_brl(contas_aberto_mes), "#ffc107", "#ffcd39")
 
     st.markdown("### 📅 Resumo por Período")
     with st.expander("Ver Resumo Completo", expanded=False):
@@ -187,7 +184,7 @@ with tabs[1]:
         
         st.markdown(f"""
         <div style='background-color: #1e1e1e; padding: 10px; border-radius: 8px; margin-bottom: 5px; border-left: 3px solid {color_tag[-1]}'>
-            <p style='margin:0; font-size:12px; color:gray;'>{t['date']} | Status: <span style='color:{status_color};'>{status_txt}</span></p>
+            <p style='margin:0; font-size:12px; color:gray;'>ID: {t['id']} | {t['date']} | Status: <span style='color:{status_color};'>{status_txt}</span></p>
             <div style='display: flex; justify-content: space-between; align-items: center;'>
                 <p style='margin:0; font-weight:bold;'>{t['description']}</p>
                 <p style='margin:0; font-weight:bold;'>{color_tag} {format_brl(t['amount'])}</p>
@@ -195,11 +192,11 @@ with tabs[1]:
         </div>
         """, unsafe_allow_html=True)
 
-# 3. LANÇAR (Passo a Passo & Gavetas)
+# 3. LANÇAR (Quatro Abas Internas)
 with tabs[2]:
-    sub_manual, sub_pagar, sub_criar_fixa = st.tabs(["Lançamento Manual", "Contas a Pagar", "Criar Despesa Fixa"])
+    sub_manual, sub_pagar, sub_criar_fixa, sub_reembolso = st.tabs(["Manual", "Contas a Pagar", "Nova Fixa", "Reembolso"])
     
-    # MANUAL (Passo a Passo dinâmico sem formulário fechado)
+    # 3.1 MANUAL
     with sub_manual:
         t_type = st.radio("Selecione a Operação", ["SAIDA", "ENTRADA"], horizontal=True)
         if t_type:
@@ -238,12 +235,11 @@ with tabs[2]:
                         st.success("Lançado com sucesso!")
                         st.rerun()
 
-    # CONTAS A PAGAR (Gavetas Expansíveis)
+    # 3.2 CONTAS A PAGAR (Gavetas)
     with sub_pagar:
-        st.write("Suas despesas recorrentes. Lance os valores do mês aqui.")
+        st.write("Suas despesas recorrentes.")
         for fixa in user_data.get("fixed_expenses", []):
             with st.expander(f"📁 {fixa['name']}"):
-                # Formulário para lançar novo mês
                 with st.form(f"form_fixa_{fixa['id']}"):
                     col1, col2 = st.columns(2)
                     f_val = col1.number_input("Valor R$", min_value=0.01, step=10.0)
@@ -258,7 +254,6 @@ with tabs[2]:
                         save_db(db_main)
                         st.rerun()
                 
-                # Histórico desta despesa específica, permitindo baixar baixa
                 st.markdown("**Histórico desta conta:**")
                 historico_fixa = [t for t in user_data.get("transactions", []) if t["description"] == f"[Fixo] {fixa['name']}"]
                 for t in sorted(historico_fixa, key=lambda x: x["date"], reverse=True):
@@ -270,16 +265,56 @@ with tabs[2]:
                             t["status"] = "Paid"
                             save_db(db_main)
                             st.rerun()
+                            
+                st.markdown("---")
+                # Botão para deletar a despesa fixa
+                if st.button(f"🗑️ Excluir Categoria '{fixa['name']}'", key=f"del_fixa_{fixa['id']}"):
+                    user_data["fixed_expenses"] = [f for f in user_data["fixed_expenses"] if f["id"] != fixa["id"]]
+                    save_db(db_main)
+                    st.rerun()
 
-    # CRIAR DESPESA FIXA
+    # 3.3 CRIAR DESPESA FIXA
     with sub_criar_fixa:
         with st.form("new_fixed"):
             nf_name = st.text_input("Nome da Despesa Fixa (Ex: ALUGUEL)")
             if st.form_submit_button("Criar Despesa"):
-                user_data.setdefault("fixed_expenses", []).append({"id": len(user_data["fixed_expenses"]) + 1, "name": nf_name.upper()})
+                user_data.setdefault("fixed_expenses", []).append({"id": len(user_data.get("fixed_expenses", [])) + 1, "name": nf_name.upper()})
                 save_db(db_main)
-                st.success("Criado! Vá em 'Contas a Pagar' para lançar os valores.")
+                st.success("Criado! Vá em 'Contas a Pagar' para lançar.")
                 st.rerun()
+
+    # 3.4 REEMBOLSO (Novidade)
+    with sub_reembolso:
+        st.write("Selecione uma movimentação para gerar o reembolso automático (inverte a operação no dia de hoje).")
+        valid_t = sorted(user_data.get("transactions", []), key=lambda x: x["date"], reverse=True)
+        if not valid_t:
+            st.info("Nenhuma transação disponível para reembolso.")
+        else:
+            with st.form("form_reembolso"):
+                t_options = {f"ID: {t['id']} | {t['date']} | {t['description']} | R$ {t['amount']}": t for t in valid_t}
+                selected_t_str = st.selectbox("Selecione a Transação", list(t_options.keys()))
+                
+                if st.form_submit_button("🔄 Processar Reembolso"):
+                    target_t = t_options[selected_t_str]
+                    
+                    # Se for Saída, o reembolso é Entrada (e vice-versa)
+                    new_type = "ENTRADA" if target_t["type"] in ["Expense", "SAIDA"] else "SAIDA"
+                    new_desc = f"[REEMBOLSO] {target_t['description']}"
+                    
+                    user_data.setdefault("transactions", []).append({
+                        "id": len(user_data["transactions"]) + 1,
+                        "type": new_type,
+                        "account": target_t["account"],
+                        "description": new_desc,
+                        "amount": target_t["amount"],
+                        "date": str_today, # Lança com a data de hoje
+                        "status": "Paid",
+                        "is_credit": False,
+                        "ignoreBalance": False
+                    })
+                    save_db(db_main)
+                    st.success("Reembolso processado com sucesso!")
+                    st.rerun()
 
 # 4. METAS
 with tabs[3]:

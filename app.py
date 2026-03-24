@@ -13,7 +13,7 @@ st.markdown("""
     <style>
     .stApp { background-color: #0e0e0e; color: #ffffff; }
     
-    /* Estilização Global de Botões */
+    /* Estilização Global de Botões - Texto Preto Garantido */
     div.stButton > button {
         background-color: #ff6600 !important;
         color: #000000 !important;
@@ -21,6 +21,7 @@ st.markdown("""
         border-radius: 8px !important;
         font-weight: bold !important;
         width: 100%;
+        height: 45px;
     }
     
     div.stButton > button:hover {
@@ -34,6 +35,10 @@ st.markdown("""
         background-color: #1a1a1a !important;
         color: white !important;
     }
+    
+    /* Cor das Tabs */
+    button[data-baseweb="tab"] { color: white !important; }
+    button[data-baseweb="tab"][aria-selected="true"] { color: #ff6600 !important; border-bottom-color: #ff6600 !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -124,6 +129,10 @@ for t in user_data.get("transactions", []):
         if t["date"] == str_today: totals[t_type]["dia"] += amt
         if t["date"].startswith(str_month): totals[t_type]["mes"] += amt
 
+# Sobra média para previsão de metas
+net_savings = totals["ENTRADA"]["all"] - sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] == "SAIDA" and t["status"] == "Paid")
+avg_monthly_savings = max(0, net_savings / max(1, (today.year - 2024)*12 + today.month))
+
 # --- NAVEGAÇÃO ---
 st.markdown("<h3 style='text-align: center; color: #ff6600;'>Financeiro Sayjins</h3>", unsafe_allow_html=True)
 tabs = st.tabs(["📊 Painel", "💸 Transf.", "➕ Lançar", "🎯 Metas", "⚙️ Extra"])
@@ -135,27 +144,28 @@ with tabs[0]:
     
     c1, c2 = st.columns(2)
     with c1: custom_card("SALDO GLOBAL", format_brl(global_balance), "#007BFF", "#3399ff")
-    with c2: custom_card("EM ABERTO (MÊS)", format_brl(contas_aberto), "#ffc107", "#ffcd39")
+    with c2: custom_card(f"ABERTO ({filtro_mes})", format_brl(contas_aberto), "#ffc107", "#ffcd39")
 
     with st.expander("📅 Resumo por Período", expanded=True):
         col_e, col_s = st.columns(2)
-        col_e.markdown("<p style='color:#4dd26b;'>🟩 ENTRADAS</p>", unsafe_allow_html=True)
+        col_e.markdown("<p style='color:#4dd26b; font-weight:bold;'>🟩 ENTRADAS</p>", unsafe_allow_html=True)
         col_e.write(f"Hoje: {format_brl(totals['ENTRADA']['dia'])}")
         col_e.write(f"Mês: {format_brl(totals['ENTRADA']['mes'])}")
         col_e.write(f"Total: {format_brl(totals['ENTRADA']['all'])}")
         
-        col_s.markdown("<p style='color:#ff6b7a;'>🟥 SAÍDAS</p>", unsafe_allow_html=True)
+        col_s.markdown("<p style='color:#ff6b7a; font-weight:bold;'>🟥 SAÍDAS</p>", unsafe_allow_html=True)
         col_s.write(f"Hoje: {format_brl(totals['SAIDA']['dia'])}")
         col_s.write(f"Mês: {format_brl(totals['SAIDA']['mes'])}")
         col_s.write(f"Total: {format_brl(totals['SAIDA']['all'])}")
 
 # 2. HISTÓRICO (APENAS LEITURA)
 with tabs[1]:
-    st.markdown("### Histórico")
+    st.markdown("### Histórico de Movimentações")
     all_t = sorted(user_data.get("transactions", []), key=lambda x: x["id"], reverse=True)
-    for t in all_t[:30]:
-        color = "#4dd26b" if t["type"] == "ENTRADA" else "#ff6b7a"
-        st.markdown(f"<div style='background-color:#1a1a1a; padding:8px; border-radius:5px; border-left:4px solid {color}; margin-bottom:5px;'><b>{t['date']}</b> | {t['description']} | <b>{format_brl(t['amount'])}</b></div>", unsafe_allow_html=True)
+    for t in all_t[:50]:
+        is_income = t["type"] in ["Income", "ENTRADA"]
+        color = "#4dd26b" if is_income else "#ff6b7a"
+        st.markdown(f"<div style='background-color:#1a1a1a; padding:10px; border-radius:8px; border-left:4px solid {color}; margin-bottom:5px;'><p style='margin:0; font-size:11px; color:gray;'>{t['date']} | ID: {t['id']}</p><div style='display:flex; justify-content:space-between;'><b>{t['description']}</b><b style='color:{color};'>{format_brl(t['amount'])}</b></div></div>", unsafe_allow_html=True)
 
 # 3. LANÇAR
 with tabs[2]:
@@ -168,14 +178,26 @@ with tabs[2]:
         if t_desc:
             t_val = st.number_input("Valor R$", min_value=0.01)
             t_method = st.selectbox("Método", ["PIX", "Débito", "Crédito"] if t_op == "SAIDA" else ["Recebimento"])
-            t_date = st.date_input("Data/Vencimento")
+            
+            if t_method == "Crédito":
+                t_date = st.date_input("Vencimento 1ª Parcela")
+                t_inst = st.number_input("Parcelas", min_value=1, value=1)
+            else:
+                t_date = st.date_input("Data")
+                t_inst = 1
+            
             t_status = st.selectbox("Status ", ["Paid", "Unpaid"], format_func=lambda x: "Efetivado" if x == "Paid" else "Pendente")
-            if st.button("Lançar Agora"):
-                user_data.setdefault("transactions", []).append({
-                    "id": len(user_data["transactions"]) + 1, "type": t_op, "account": t_acc, 
-                    "description": f"[{t_method}] {t_desc}", "amount": t_val, "date": t_date.strftime("%Y-%m-%d"), "status": t_status
-                })
-                save_db(db_main); st.rerun()
+            
+            if st.button("🚀 Confirmar Lançamento"):
+                base_date = t_date
+                for i in range(t_inst):
+                    desc_f = f"{t_desc} ({i+1}/{t_inst})" if t_inst > 1 else t_desc
+                    user_data.setdefault("transactions", []).append({
+                        "id": len(user_data["transactions"]) + 1, "type": t_op, "account": t_acc, 
+                        "description": f"[{t_method}] {desc_f}", "amount": t_val, "date": base_date.strftime("%Y-%m-%d"), "status": t_status
+                    })
+                    base_date += relativedelta(months=1)
+                save_db(db_main); st.success("Lançado!"); st.rerun()
 
     with m_pagar:
         for fixa in user_data.get("fixed_expenses", []):
@@ -212,23 +234,38 @@ with tabs[2]:
 # 4. METAS
 with tabs[3]:
     st.markdown("### Metas")
-    if st.button("➕ Adicionar Nova Meta"):
-        st.session_state.nova_meta = True
-    if st.session_state.get("nova_meta"):
-        with st.form("f_meta"):
-            n_m = st.text_input("Objetivo"); v_m = st.number_input("Valor Alvo")
-            if st.form_submit_button("Salvar Meta"):
-                user_data.setdefault("goals", []).append({"name": n_m, "target": v_m, "status": "Active"})
-                save_db(db_main); st.session_state.nova_meta = False; st.rerun()
+    active_goals = [g for g in user_data.get("goals", []) if g.get("status", "Active") == "Active"]
+    total_val = sum(g["target"] for g in active_goals)
+    custom_card("TOTAL DAS METAS", format_brl(total_val), "#9b59b6", "#c39bd3")
+
+    with st.expander("➕ Nova Meta"):
+        n_m = st.text_input("Objetivo"); v_m = st.number_input("Valor Alvo")
+        if st.button("Salvar Meta"):
+            user_data.setdefault("goals", []).append({"name": n_m, "target": v_m, "status": "Active"})
+            save_db(db_main); st.rerun()
                 
     for i, g in enumerate(user_data.get("goals", [])):
-        if g["status"] == "Active":
+        # O .get("status", "Active") resolve o erro de chave antiga
+        if g.get("status", "Active") == "Active":
+            progress = min(global_balance/g["target"], 1.0) if g["target"] > 0 else 0
             st.write(f"**{g['name']}**")
-            st.progress(min(global_balance/g["target"], 1.0) if g["target"] > 0 else 0)
+            st.progress(progress)
+            st.caption(f"{format_brl(global_balance)} / {format_brl(g['target'])}")
+            if avg_monthly_savings > 0 and global_balance < g["target"]:
+                st.caption(f"⏱️ Previsão: ~{int((g['target']-global_balance)/avg_monthly_savings)+1} meses")
             if st.button("✅ Concluir", key=f"meta_{i}"):
                 g["status"] = "Achieved"; save_db(db_main); st.rerun()
+            st.markdown("---")
 
 # 5. EXTRA
 with tabs[4]:
-    if st.button("Zerar Meu Banco de Dados"):
-        user_data["transactions"] = []; user_data["goals"] = []; save_db(db_main); st.rerun()
+    sub_ai, sub_config = st.tabs(["🧠 IA Advisor", "⚙️ Config"])
+    with sub_ai:
+        api_key = st.text_input("Chave Gemini", type="password")
+        if api_key and st.button("Pedir Conselhos"):
+            client = genai.Client(api_key=api_key)
+            st.write(client.models.generate_content(model='gemini-1.5-pro', contents=f"Saldo: {global_balance}. Metas: {[g['name'] for g in active_goals]}").text)
+    with sub_config:
+        st.warning("Zona de Perigo")
+        if st.button("Zerar Meu Banco de Dados"):
+            user_data["transactions"] = []; user_data["goals"] = []; save_db(db_main); st.rerun()

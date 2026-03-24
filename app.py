@@ -6,6 +6,49 @@ import datetime
 from dateutil.relativedelta import relativedelta
 import google.generativeai as genai
 
+import streamlit as st
+import pandas as pd
+import datetime
+from dateutil.relativedelta import relativedelta
+import google.generativeai as genai
+import firebase_admin
+from firebase_admin import credentials, db
+
+st.set_page_config(page_title="Financeiro Sayjins", layout="wide", initial_sidebar_state="collapsed")
+
+# --- Sistema de Banco de Dados Cloud (Firebase) ---
+# Inicializa a conexão com o Firebase apenas uma vez
+if not firebase_admin._apps:
+    # Transforma o st.secrets em um dicionário que o Firebase entende
+    cred = credentials.Certificate(dict(st.secrets["firebase_key"]))
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': st.secrets["database_url"]
+    })
+
+def load_db():
+    # Lê todos os dados da raiz do banco (/)
+    ref = db.reference('/')
+    data = ref.get()
+    if data:
+        return data
+    # Se o banco estiver vazio, cria a estrutura base
+    return {"users": {}}
+
+def save_db(db_main):
+    # Sobrescreve os dados na raiz do banco (/)
+    ref = db.reference('/')
+    ref.set(db_main)
+
+def format_brl(value):
+    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+# Carrega o banco principal da nuvem
+if 'db_main' not in st.session_state:
+    st.session_state.db_main = load_db()
+
+# ... O RESTANTE DO SEU CÓDIGO CONTINUA EXATAMENTE IGUAL A PARTIR DAQUI ...
+# (Variáveis de sessão para controle de login, abas, transações, etc.)
+
 st.set_page_config(page_title="Financeiro Sayjins", layout="wide", initial_sidebar_state="collapsed")
 
 DATA_FILE = "finance_data.json"

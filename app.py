@@ -8,7 +8,7 @@ from firebase_admin import credentials, db
 
 st.set_page_config(page_title="Financeiro Sayjins", layout="centered", initial_sidebar_state="collapsed")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (Laranja Sayjin + Botões Texto Preto) ---
 st.markdown("""
     <style>
     .stApp { background-color: #0e0e0e; color: #ffffff; }
@@ -19,9 +19,9 @@ st.markdown("""
         border-radius: 8px !important;
         font-weight: bold !important;
         width: 100%;
-        height: 40px;
+        height: 42px;
     }
-    div.stButton > button:hover { background-color: #cc5200 !important; }
+    div.stButton > button:hover { background-color: #cc5200 !important; color: #000000 !important; }
     .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {
         border-radius: 5px; background-color: #1a1a1a !important; color: white !important;
     }
@@ -58,23 +58,27 @@ if 'logged_in' not in st.session_state:
 
 db_main = st.session_state.db_main
 
-# --- LOGIN ---
+# --- LOGIN (Mobile Fix) ---
 if not st.session_state.logged_in:
     st.markdown("<h1 style='text-align: center; color: #ff6600;'>⚡ Financeiro Sayjins</h1>", unsafe_allow_html=True)
     t1, t2 = st.tabs(["Entrar", "Criar Conta"])
     with t1:
         with st.form("login_f"):
-            u = st.text_input("Usuário"); p = st.text_input("Senha", type="password")
+            u_in = st.text_input("Usuário")
+            p_in = st.text_input("Senha", type="password")
             if st.form_submit_button("Entrar"):
-                if u in db_main.get("users", {}) and db_main["users"][u]["password"] == p:
+                u = u_in.strip().lower()
+                if u in db_main.get("users", {}) and db_main["users"][u]["password"] == p_in.strip():
                     st.session_state.logged_in = True; st.session_state.username = u; st.rerun()
-                else: st.error("Erro!")
+                else: st.error("Usuário ou senha incorretos.")
     with t2:
         with st.form("reg_f"):
-            nu = st.text_input("Novo Usuário"); np = st.text_input("Nova Senha", type="password")
-            if st.form_submit_button("Criar"):
-                if nu and np:
-                    db_main.setdefault("users", {})[nu] = {"password": np, "data": {"accounts": [{"id":1, "name":"Principal", "initial_balance":0.0}], "transactions": [], "goals": [], "fixed_expenses": [], "settings": {"credit_limit": 5000.0}}}
+            nu_in = st.text_input("Novo Usuário")
+            np_in = st.text_input("Nova Senha", type="password")
+            if st.form_submit_button("Criar Conta"):
+                nu = nu_in.strip().lower()
+                if nu and np_in:
+                    db_main.setdefault("users", {})[nu] = {"password": np_in.strip(), "data": {"accounts": [{"id":1, "name":"Principal", "initial_balance":0.0}], "transactions": [], "goals": [], "fixed_expenses": [], "settings": {"credit_limit": 5000.0}}}
                     save_db(db_main); st.success("Criado!"); st.rerun()
     st.stop()
 
@@ -83,7 +87,7 @@ u_data = db_main["users"][u_name]["data"]
 u_data.setdefault("fixed_expenses", [])
 u_data.setdefault("transactions", [])
 
-# --- PROCESSAMENTO DE TOTAIS E SALDO ---
+# --- SALDO REAL ---
 def get_balance():
     b = sum(a.get("initial_balance", 0) for a in u_data.get("accounts", []))
     for t in u_data["transactions"]:
@@ -93,64 +97,21 @@ def get_balance():
 
 global_balance = get_balance()
 today = datetime.date.today()
-str_today = today.strftime("%Y-%m-%d")
 str_month = today.strftime("%Y-%m")
-str_year = today.strftime("%Y")
-one_week_ago = (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
 
-# Dicionário de Totais
-totals = {
-    "ENTRADA": {"dia": 0, "sem": 0, "mes": 0, "ano": 0, "all": 0},
-    "SAIDA":   {"dia": 0, "sem": 0, "mes": 0, "ano": 0, "all": 0}
-}
-
-for t in u_data["transactions"]:
-    amt = t["amount"]
-    t_type = "ENTRADA" if t["type"] in ["Income", "ENTRADA"] else "SAIDA"
-    
-    # Regra: Entradas só contam se pagas. Saídas contam sempre (paga ou pendente) nos totais alltime.
-    if t_type == "SAIDA" or (t_type == "ENTRADA" and t["status"] == "Paid"):
-        totals[t_type]["all"] += amt
-        if t["date"] == str_today: totals[t_type]["dia"] += amt
-        if t["date"] >= one_week_ago and t["date"] <= str_today: totals[t_type]["sem"] += amt
-        if t["date"].startswith(str_month): totals[t_type]["mes"] += amt
-        if t["date"].startswith(str_year): totals[t_type]["ano"] += amt
-
-# Previsão Metas
-paid_in = sum(t["amount"] for t in u_data["transactions"] if t["type"] == "ENTRADA" and t["status"] == "Paid")
-paid_out = sum(t["amount"] for t in u_data["transactions"] if t["type"] == "SAIDA" and t["status"] == "Paid")
-avg_savings = max(0, (paid_in - paid_out) / max(1, (today.year - 2024)*12 + today.month))
-
-# --- NAVEGAÇÃO ---
+# --- INTERFACE ---
 st.markdown(f"<p style='text-align:center;'>Sayjin: <b>{u_name}</b></p>", unsafe_allow_html=True)
 tabs = st.tabs(["📊 Painel", "💸 Histórico", "➕ Lançar", "🎯 Metas", "⚙️ Extra"])
 
 # 1. PAINEL
 with tabs[0]:
-    f_mes = st.text_input("Filtro Mês (YYYY-MM)", value=str_month)
+    f_mes = st.text_input("Mês Filtro (YYYY-MM)", value=str_month)
+    # Soma EM ABERTO: Saídas Pendentes do mês
     aberto = sum(t["amount"] for t in u_data["transactions"] if t.get("status") == "Unpaid" and t.get("type") == "SAIDA" and str(t.get("date", "")).startswith(f_mes))
     
     c1, c2 = st.columns(2)
     with c1: custom_card("SALDO GLOBAL", format_brl(global_balance), "#007BFF", "#3399ff")
-    with c2: custom_card(f"ABERTO EM {f_mes}", format_brl(aberto), "#ffc107", "#ffcd39")
-
-    # Resumo Temporal Restaurado
-    with st.expander("📅 Resumo por Período (Dia/Semana/Mês/Ano)", expanded=True):
-        col_e, col_s = st.columns(2)
-        with col_e:
-            st.markdown("<p style='color:#4dd26b; font-weight:bold;'>🟩 ENTRADAS</p>", unsafe_allow_html=True)
-            st.write(f"Hoje: {format_brl(totals['ENTRADA']['dia'])}")
-            st.write(f"7 dias: {format_brl(totals['ENTRADA']['sem'])}")
-            st.write(f"Mês: {format_brl(totals['ENTRADA']['mes'])}")
-            st.write(f"Ano: {format_brl(totals['ENTRADA']['ano'])}")
-            st.write(f"**ALL TIME: {format_brl(totals['ENTRADA']['all'])}**")
-        with col_s:
-            st.markdown("<p style='color:#ff6b7a; font-weight:bold;'>🟥 SAÍDAS</p>", unsafe_allow_html=True)
-            st.write(f"Hoje: {format_brl(totals['SAIDA']['dia'])}")
-            st.write(f"7 dias: {format_brl(totals['SAIDA']['sem'])}")
-            st.write(f"Mês: {format_brl(totals['SAIDA']['mes'])}")
-            st.write(f"Ano: {format_brl(totals['SAIDA']['ano'])}")
-            st.write(f"**ALL TIME: {format_brl(totals['SAIDA']['all'])}**")
+    with c2: custom_card(f"EM ABERTO ({f_mes})", format_brl(aberto), "#ffc107", "#ffcd39")
 
     st.markdown("### 📅 Pagos no Mês")
     pagos = [t for t in u_data["transactions"] if t.get("status") == "Paid" and t.get("type") == "SAIDA" and str(t.get("date", "")).startswith(f_mes)]
@@ -159,10 +120,10 @@ with tabs[0]:
 
 # 2. HISTÓRICO
 with tabs[1]:
+    st.write("### Últimas Movimentações")
     all_t = sorted(u_data["transactions"], key=lambda x: x.get('id', 0), reverse=True)
-    for i, t in enumerate(all_t[:50]):
-        is_income = t["type"] == "ENTRADA"
-        cor = "#4dd26b" if is_income else "#ff6b7a"
+    for i, t in enumerate(all_t[:30]):
+        cor = "#4dd26b" if t["type"] == "ENTRADA" else "#ff6b7a"
         with st.container():
             st.markdown(f"<div style='background-color:#1a1a1a; padding:10px; border-radius:5px; border-left:4px solid {cor}; margin-bottom:2px;'>{t['date']} - {t['description']} - <b>{format_brl(t['amount'])}</b></div>", unsafe_allow_html=True)
             if st.button(f"🗑️ Excluir #{t['id']}", key=f"del_t_{t['id']}_{i}"):
@@ -174,15 +135,54 @@ with tabs[2]:
     m_man, m_fix, m_reem = st.tabs(["Manual", "Gavetas (Fixas)", "Reembolso"])
     
     with m_man:
-        op = st.radio("Tipo", ["SAIDA", "ENTRADA"], horizontal=True)
-        desc = st.text_input("Descrição")
-        if desc:
-            v = st.number_input("Valor", min_value=0.01)
-            d = st.date_input("Data")
-            if st.button("Salvar Manual"):
-                new_id = max([t.get('id', 0) for t in u_data["transactions"]], default=0) + 1
-                u_data["transactions"].append({"id": new_id, "type": op, "description": desc, "amount": v, "date": d.strftime("%Y-%m-%d"), "status": "Paid", "ignoreBalance": False})
-                save_db(db_main); st.rerun()
+        op = st.radio("Selecione a Operação", ["SAIDA", "ENTRADA"], horizontal=True)
+        t_desc = st.text_input("O que você comprou/recebeu?")
+        
+        if t_desc:
+            t_val = st.number_input("Valor R$", min_value=0.01, step=10.0)
+            
+            if t_val > 0:
+                if op == "SAIDA":
+                    # Passo a Passo para Saída
+                    t_method = st.selectbox("Forma de Pagamento", ["PIX", "Cartão de Débito", "Cartão de Crédito"])
+                    
+                    if t_method == "Cartão de Crédito":
+                        t_date = st.date_input("Vencimento da Fatura (1ª Parcela)")
+                        t_inst = st.number_input("Número de Parcelas", min_value=1, value=1)
+                        st.info("Lançamentos de crédito entram como 'Pendentes' no seu Contas a Pagar.")
+                    else:
+                        t_date = st.date_input("Data do Pagamento")
+                        t_inst = 1
+                    
+                    # Se for crédito, status inicial é Unpaid (Em Aberto). PIX/Débito é Paid (Pago).
+                    default_status = "Unpaid" if t_method == "Cartão de Crédito" else "Paid"
+                    t_status = st.selectbox("Status", ["Paid", "Unpaid"], index=0 if default_status == "Paid" else 1, 
+                                            format_func=lambda x: "Pago/Efetivado" if x == "Paid" else "Pendente (Em Aberto)")
+                else:
+                    # Passo a Passo para Entrada
+                    t_method = "Recebimento"
+                    t_date = st.date_input("Data do Recebimento")
+                    t_inst = 1
+                    t_status = st.selectbox("Status", ["Paid", "Unpaid"], format_func=lambda x: "Recebido" if x == "Paid" else "Pendente")
+
+                if st.button("🚀 Confirmar Lançamento"):
+                    base_date = t_date
+                    for i in range(t_inst):
+                        desc_final = f"{t_desc} ({i+1}/{t_inst})" if t_inst > 1 else t_desc
+                        new_id = max([t.get('id', 0) for t in u_data["transactions"]], default=0) + 1
+                        u_data["transactions"].append({
+                            "id": new_id, 
+                            "type": op, 
+                            "description": f"[{t_method}] {desc_final}", 
+                            "amount": t_val, 
+                            "date": base_date.strftime("%Y-%m-%d"), 
+                            "status": t_status, 
+                            "ignoreBalance": False
+                        })
+                        base_date += relativedelta(months=1)
+                    save_db(db_main)
+                    st.success("Lançado com sucesso!")
+                    st.rerun()
 
     with m_fix:
         for fixa in u_data["fixed_expenses"]:
@@ -191,32 +191,34 @@ with tabs[2]:
                 fd = st.date_input("Vencimento", key=f"d_{fixa['id']}")
                 if st.button("Lançar Mês", key=f"b_{fixa['id']}"):
                     new_id = max([t.get('id', 0) for t in u_data["transactions"]], default=0) + 1
-                    u_data["transactions"].append({"id": new_id, "type": "SAIDA", "description": f"[Fixo] {fixa['name']}", "amount": fv, "date": fd.strftime("%Y-%m-%d"), "status": "Unpaid", "ignoreBalance": False, "fixed_id": fixa['id']})
+                    u_data["transactions"].append({
+                        "id": new_id, "type": "SAIDA", "description": f"[Fixo] {fixa['name']}", 
+                        "amount": fv, "date": fd.strftime("%Y-%m-%d"), "status": "Unpaid", 
+                        "ignoreBalance": False, "fixed_id": fixa['id']
+                    })
                     save_db(db_main); st.rerun()
                 
                 hist = [t for t in u_data["transactions"] if t.get("fixed_id") == fixa['id']]
                 for t in sorted(hist, key=lambda x: x['date'], reverse=True):
-                    col_a, col_b = st.columns([3,1])
-                    if t["status"] == "Unpaid":
-                        col_a.write(f"🔴 {t['date']} | {format_brl(t['amount'])}")
-                        if col_b.button("Pagar", key=f"p_{t['id']}"):
-                            t["status"] = "Paid"; save_db(db_main); st.rerun()
-                    else: col_a.write(f"🟢 {t['date']} | {format_brl(t['amount'])}")
+                    cA, cB = st.columns([3,1])
+                    st_icon = "🔴" if t["status"] == "Unpaid" else "🟢"
+                    cA.write(f"{st_icon} {t['date']} | {format_brl(t['amount'])}")
+                    if t["status"] == "Unpaid" and cB.button("Pagar", key=f"p_{t['id']}"):
+                        t["status"] = "Paid"; save_db(db_main); st.rerun()
                 
-                if st.button(f"🗑️ Deletar Categoria", key=f"del_cat_{fixa['id']}"):
+                if st.button("Deletar Categoria", key=f"del_{fixa['id']}"):
                     u_data["fixed_expenses"] = [f for f in u_data["fixed_expenses"] if f["id"] != fixa["id"]]
                     save_db(db_main); st.rerun()
 
-        nf = st.text_input("Nova Categoria (Ex: COPASA)")
+        nf = st.text_input("Nova Categoria Fixa")
         if st.button("Criar Gaveta"):
-            new_id_f = max([f.get('id', 0) for f in u_data["fixed_expenses"]], default=0) + 1
-            u_data["fixed_expenses"].append({"id": new_id_f, "name": nf.upper()})
+            u_data["fixed_expenses"].append({"id": len(u_data["fixed_expenses"])+1, "name": nf.upper()})
             save_db(db_main); st.rerun()
 
     with m_reem:
         if u_data["transactions"]:
-            tre = st.selectbox("Escolha transação", sorted(u_data["transactions"], key=lambda x:x.get('id', 0), reverse=True), format_func=lambda x: f"{x['date']} - {x['description']}")
-            if st.button("Reembolsar"):
+            tre = st.selectbox("Transação para Reembolso", sorted(u_data["transactions"], key=lambda x:x.get('id', 0), reverse=True), format_func=lambda x: f"{x['date']} - {x['description']}")
+            if st.button("🔄 Estornar"):
                 nt = "ENTRADA" if tre["type"] == "SAIDA" else "SAIDA"
                 new_id = max([t.get('id', 0) for t in u_data["transactions"]], default=0) + 1
                 u_data["transactions"].append({"id": new_id, "type": nt, "description": f"[REEM] {tre['description']}", "amount": tre["amount"], "date": today.strftime("%Y-%m-%d"), "status": "Paid", "ignoreBalance": False})
@@ -227,52 +229,38 @@ with tabs[3]:
     if st.button("➕ Nova Meta"): st.session_state.nm = True
     if st.session_state.get("nm"):
         with st.form("fm"):
-            nn = st.text_input("Nome"); vv = st.number_input("Alvo")
-            if st.form_submit_button("Salvar Meta"):
+            nn = st.text_input("Objetivo"); vv = st.number_input("Alvo")
+            if st.form_submit_button("Salvar"):
                 u_data.setdefault("goals", []).append({"name": nn, "target": vv, "status": "Active"})
                 save_db(db_main); st.session_state.nm = False; st.rerun()
     for i, g in enumerate(u_data.get("goals", [])):
-        if g.get("status") == "Active":
+        if g.get("status", "Active") == "Active":
             prog = max(0.0, min(global_balance / g["target"], 1.0)) if g["target"] > 0 else 0.0
             st.write(f"**{g['name']}**"); st.progress(prog)
-            st.caption(f"{format_brl(global_balance)} / {format_brl(g['target'])}")
-            if st.button("✅ Concluir Meta", key=f"m_{i}"):
+            if st.button("✅ Concluir", key=f"m_{i}"):
                 g["status"] = "Achieved"; save_db(db_main); st.rerun()
 
-# 5. EXTRA (CSV Restaurado)
+# 5. EXTRA
 with tabs[4]:
-    s_csv, s_ia, s_config = st.tabs(["📁 Importar CSV", "🧠 IA Advisor", "⚙️ Config"])
-    with s_csv:
-        st.info("Importa CSV padrão Banco Inter. Atualiza os resumos ALLTIME sem alterar seu saldo real.")
-        up_files = st.file_uploader("Arquivos CSV", type="csv", accept_multiple_files=True)
-        if up_files and st.button("Processar CSVs"):
-            for f in up_files:
-                try:
-                    df = pd.read_csv(f, encoding='utf-8', sep=';', skiprows=5)
-                    df.columns = df.columns.str.strip()
-                    for _, row in df.iterrows():
-                        if pd.isna(row.get('Data Lançamento')): continue
-                        val_s = str(row.get('Valor', '0')).replace('.', '').replace(',', '.')
-                        val_v = abs(float(val_s))
-                        t_t = "SAIDA" if float(val_s) < 0 else "ENTRADA"
-                        desc = (str(row.get('Histórico', '')) + " " + str(row.get('Descrição', ''))).replace("nan", "").strip()
-                        r_date = str(row.get('Data Lançamento', ''))
-                        try: p_date = datetime.datetime.strptime(r_date.strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
-                        except: p_date = r_date
-                        
-                        new_id = max([t.get('id', 0) for t in u_data["transactions"]], default=0) + 1
-                        u_data["transactions"].append({
-                            "id": new_id, "type": t_t, "description": desc, "amount": val_v, "date": p_date, "status": "Paid", "ignoreBalance": True
-                        })
-                    save_db(db_main); st.success(f"{f.name} importado!")
-                except Exception as e: st.error(f"Erro em {f.name}: {e}")
+    sub_csv, sub_config = st.tabs(["📁 CSV", "⚙️ Sistema"])
+    with sub_csv:
+        up = st.file_uploader("Importar Inter", type="csv", accept_multiple_files=True)
+        if up and st.button("Processar"):
+            for f in up:
+                df = pd.read_csv(f, encoding='utf-8', sep=';', skiprows=5)
+                df.columns = df.columns.str.strip()
+                for _, row in df.iterrows():
+                    if pd.isna(row.get('Data Lançamento')): continue
+                    v_s = str(row.get('Valor', '0')).replace('.', '').replace(',', '.')
+                    v_v = abs(float(v_s))
+                    t_t = "SAIDA" if float(v_s) < 0 else "ENTRADA"
+                    desc = (str(row.get('Histórico', '')) + " " + str(row.get('Descrição', ''))).replace("nan", "").strip()
+                    try: p_date = datetime.datetime.strptime(str(row.get('Data Lançamento', '')).strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+                    except: p_date = str_today
+                    new_id = max([t.get('id', 0) for t in u_data["transactions"]], default=0) + 1
+                    u_data["transactions"].append({"id": new_id, "type": t_t, "description": desc, "amount": v_v, "date": p_date, "status": "Paid", "ignoreBalance": True})
+                save_db(db_main)
             st.rerun()
-            
-    with s_ia:
-        ak = st.text_input("Chave Gemini", type="password")
-        if ak and st.button("Dicas"):
-            c = genai.Client(api_key=ak)
-            st.write(c.models.generate_content(model='gemini-1.5-pro', contents=f"Saldo: {global_balance}").text)
-    with s_config:
+    with sub_config:
         if st.button("🚪 Sair"): st.session_state.logged_in = False; st.rerun()
         if st.button("🚨 ZERAR TUDO"): u_data["transactions"] = []; u_data["goals"] = []; save_db(db_main); st.rerun()

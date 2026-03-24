@@ -176,9 +176,9 @@ tabs = st.tabs(["Dashboard", "Transações", "Nova Transação", "Contas", "Meta
 with tabs[0]:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Saldo Global Atual", format_brl(global_balance))
-    col2.metric("ENTROU ALLTIME", format_brl(entrou_alltime)) # Atualizado!
-    col3.metric("SAIU ALLTIME", format_brl(saiu_alltime))     # Atualizado!
-    col4.metric("Limite de Crédito Disponível", format_brl(available_credit))
+    col2.metric("ENTROU ALLTIME", format_brl(entrou_alltime))
+    col3.metric("SAIU ALLTIME", format_brl(saiu_alltime))
+    col4.metric("Limite de Crédito", format_brl(available_credit))
     
     st.subheader("Últimas Transações")
     if db["transactions"]:
@@ -186,7 +186,6 @@ with tabs[0]:
         st.dataframe(df_recent, use_container_width=True)
     else:
         st.write("Nenhuma transação registrada.")
-
 # 1. Dashboard
 with tabs[0]:
     col1, col2, col3, col4 = st.columns(4)
@@ -320,6 +319,7 @@ with tabs[5]:
                 st.success(f"Arquivo '{file.name}' processado! {count_imported} transações importadas.")
             except Exception as e:
                 st.error(f"Erro ao ler arquivo '{file.name}': {e}")
+
 # 7. AI Advisor
 with tabs[6]:
     st.markdown("### IA Conselheira Financeira")
@@ -327,9 +327,8 @@ with tabs[6]:
     if api_key and st.button("Pedir Plano de Ação"):
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-pro')
-        prompt = f"Saldo: R$ {global_balance}. Receita: R$ {all_time_income}. Despesa: R$ {all_time_expense}. Metas: {db['goals']}. Crie um plano de ação."
+        prompt = f"Saldo: R$ {global_balance}. Entrou All-Time: R$ {entrou_alltime}. Saiu All-Time: R$ {saiu_alltime}. Metas: {db['goals']}. Crie um plano de ação."
         st.write(model.generate_content(prompt).text)
-
 # 8. Configurações
 with tabs[7]:
     new_limit = st.number_input("Limite Total de Crédito (R$)", value=db["settings"]["credit_limit"])

@@ -245,27 +245,58 @@ with tabs[4]:
         st.progress(progress)
 
 # 6. Importar CSV
+# 6. Importar CSV
 with tabs[5]:
-    st.info("Importa CSV padrão Banco Inter.")
+    st.info("Importa CSV padrão Banco Inter. As transações não alterarão o saldo real (ignoreBalance = True).")
     uploaded_files = st.file_uploader("Escolha os arquivos CSV", type="csv", accept_multiple_files=True)
     if uploaded_files and st.button("Processar Arquivos"):
         for file in uploaded_files:
             try:
-                df = pd.read_csv(file, encoding='latin1', sep=';')
+                # O skiprows=5 ignora o cabeçalho do Inter e vai direto pra tabela
+                df = pd.read_csv(file, encoding='utf-8', sep=';', skiprows=5)
+                
                 for _, row in df.iterrows():
+                    # Formata o valor removendo pontos e trocando vírgula por ponto (Padrão BR)
+                    val_str = str(row.get('Valor', '0')).replace('.', '').replace(',', '.')
+                    
+                    try:
+                        amount_val = float(val_str)
+                    except ValueError:
+                        amount_val = 0.0
+                        
+                    # Se o valor for negativo, é Despesa. Se for positivo, é Receita.
+                    t_type = "Expense" if amount_val < 0 else "Income"
+                    
+                    # Junta o Histórico e a Descrição (ignorando valores nulos 'nan')
+                    hist = str(row.get('Histórico', ''))
+                    desc = str(row.get('Descrição', 'nan'))
+                    desc = "" if desc == "nan" else desc
+                    full_desc = f"{hist} {desc}".strip()
+                    
+                    # Converte a data do Inter (DD/MM/YYYY) para o padrão do App (YYYY-MM-DD)
+                    raw_date = str(row.get('Data Lançamento', ''))
+                    try:
+                        parsed_date = datetime.datetime.strptime(raw_date, "%d/%m/%Y").strftime("%Y-%m-%d")
+                    except ValueError:
+                        parsed_date = raw_date
+                        
+                    # Salva no banco de dados
                     db["transactions"].append({
                         "id": len(db["transactions"]) + 1,
-                        "type": "Expense",
-                        "account": db["accounts"][0]["name"],
-                        "description": str(row.get('Descrição', 'CSV Import')),
-                        "amount": abs(float(str(row.get('Valor', '0')).replace(',', '.'))),
-                        "date": str(row.get('Data', datetime.date.today())),
-                        "status": "Paid", "is_credit": False, "ignoreBalance": True
+                        "type": t_type,
+                        "account": db["accounts"][0]["name"] if db["accounts"] else "Importada",
+                        "description": full_desc if full_desc else "CSV Import",
+                        "amount": abs(amount_val), # Guarda o valor sempre positivo no banco
+                        "date": parsed_date if parsed_date else str(datetime.date.today()),
+                        "status": "Paid", 
+                        "is_credit": False, 
+                        "ignoreBalance": True
                     })
-                save_db(db_main)
-                st.success("Arquivos processados com sucesso!")
+                    
+                save_db(st.session_state.db_main)
+                st.success(f"Arquivo '{file.name}' processado com sucesso!")
             except Exception as e:
-                st.error(f"Erro ao ler arquivo: {e}")
+                st.error(f"Erro ao ler arquivo '{file.name}': {e}")
 
 # 7. AI Advisor
 with tabs[6]:

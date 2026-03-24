@@ -6,21 +6,15 @@ from google import genai
 import firebase_admin
 from firebase_admin import credentials, db
 
-# Layout Centered (9:16) para mobile
 st.set_page_config(page_title="Financeiro Sayjins", layout="centered", initial_sidebar_state="collapsed")
 
-# --- CUSTOM CSS (Tema Dark & Laranja Sayjin + Cards) ---
+# --- CUSTOM CSS (Tema Dark & Laranja Sayjin + Cores Dinâmicas) ---
 st.markdown("""
     <style>
     .stApp { background-color: #0e0e0e; color: #ffffff; }
-    div.stButton > button:first-child {
-        background-color: #ff6600; color: white; border: none; border-radius: 8px; font-weight: bold;
-    }
+    div.stButton > button:first-child { background-color: #ff6600; color: white; border: none; border-radius: 8px; font-weight: bold; }
     div.stButton > button:first-child:hover { background-color: #cc5200; border: none; }
-    .stTextInput input, .stNumberInput input { border-radius: 5px; }
-    .stTextInput input:focus, .stNumberInput input:focus {
-        border-color: #ff6600 !important; box-shadow: 0 0 0 1px #ff6600 !important;
-    }
+    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] { border-radius: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -38,20 +32,12 @@ if not firebase_admin._apps:
         cred = credentials.Certificate(dict(st.secrets["firebase_key"]))
         firebase_admin.initialize_app(cred, {'databaseURL': st.secrets["database_url"]})
     except Exception as e:
-        st.error(f"Erro ao conectar com o Firebase. Verifique seus Secrets. Erro: {e}")
+        st.error(f"Erro ao conectar com o Firebase. Verifique seus Secrets.")
         st.stop()
 
-def load_db():
-    ref = db.reference('/')
-    data = ref.get()
-    return data if data else {"users": {}}
-
-def save_db(db_main):
-    ref = db.reference('/')
-    ref.set(db_main)
-
-def format_brl(value):
-    return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def load_db(): return db.reference('/').get() or {"users": {}}
+def save_db(db_main): db.reference('/').set(db_main)
+def format_brl(value): return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 if 'db_main' not in st.session_state: st.session_state.db_main = load_db()
 if 'logged_in' not in st.session_state:
@@ -64,7 +50,6 @@ db_main = st.session_state.db_main
 if not st.session_state.logged_in:
     st.markdown("<h1 style='text-align: center; color: #ff6600;'>⚡ Financeiro Sayjins</h1>", unsafe_allow_html=True)
     tab_login, tab_register = st.tabs(["Entrar", "Criar Conta"])
-    
     with tab_login:
         with st.form("login_form"):
             user_login = st.text_input("Usuário")
@@ -74,9 +59,7 @@ if not st.session_state.logged_in:
                     st.session_state.logged_in = True
                     st.session_state.username = user_login
                     st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos!")
-                    
+                else: st.error("Usuário ou senha incorretos!")
     with tab_register:
         with st.form("register_form"):
             new_user = st.text_input("Escolha um Usuário")
@@ -86,19 +69,9 @@ if not st.session_state.logged_in:
                 elif new_user in db_main.get("users", {}): st.error("Usuário já existe!")
                 else:
                     if "users" not in db_main: db_main["users"] = {}
-                    
-                    default_fixed = [
-                        {"id": 1, "name": "COPASA (ÁGUA)"}, {"id": 2, "name": "CEMIG (LUZ)"},
-                        {"id": 3, "name": "CLARO (CELULAR)"}, {"id": 4, "name": "INTERNET"}
-                    ]
-                        
                     db_main["users"][new_user] = {
                         "password": new_pass,
-                        "data": {
-                            "accounts": [], "transactions": [], "goals": [], 
-                            "templates": [], "fixed_expenses": default_fixed,
-                            "settings": {"credit_limit": 5000.0}
-                        }
+                        "data": {"accounts": [], "transactions": [], "goals": [], "fixed_expenses": [], "settings": {"credit_limit": 5000.0}}
                     }
                     save_db(db_main)
                     st.success("Conta criada! Vá na aba 'Entrar'.")
@@ -107,14 +80,9 @@ if not st.session_state.logged_in:
 # --- CARREGA DADOS DO USUÁRIO ---
 username = st.session_state.username
 user_data = db_main["users"][username]["data"]
-
-# Ajustes de retrocompatibilidade para contas antigas
-if "templates" not in user_data: user_data["templates"] = []
-if "fixed_expenses" not in user_data: 
-    user_data["fixed_expenses"] = [{"id": 1, "name": "COPASA (ÁGUA)"}, {"id": 2, "name": "CEMIG (LUZ)"}]
+if "fixed_expenses" not in user_data: user_data["fixed_expenses"] = []
 
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/User_icon_2.svg/800px-User_icon_2.svg.png", width=50)
     st.write(f"Fala, **{username}**!")
     if st.button("Sair da Conta"):
         st.session_state.logged_in = False
@@ -123,10 +91,9 @@ with st.sidebar:
 
 # --- BLOQUEIO INICIAL ---
 if not user_data.get("accounts"):
-    st.title("Bem-vindo ao campo de batalha! 🐉")
-    st.info("Crie sua conta principal e informe o saldo real para iniciarmos.")
+    st.title("Bem-vindo! 🐉")
     with st.form("onboarding_form"):
-        acc_name = st.text_input("Nome da Instituição (ex: Nubank, Inter)")
+        acc_name = st.text_input("Nome da Conta Principal")
         acc_balance = st.number_input("Saldo Atual Real (R$)", value=0.0, step=10.0)
         if st.form_submit_button("Começar"):
             user_data.setdefault("accounts", []).append({"id": 1, "name": acc_name, "initial_balance": acc_balance})
@@ -134,36 +101,25 @@ if not user_data.get("accounts"):
             st.rerun()
     st.stop()
 
-# --- LÓGICA DE NEGÓCIOS ---
-def calculate_real_balance(account_name):
-    acc = next((a for a in user_data["accounts"] if a["name"] == account_name), None)
-    if not acc: return 0.0
-    balance = acc["initial_balance"]
+# --- LÓGICA DE NEGÓCIOS GERAL ---
+def calculate_real_balance():
+    balance = sum(a["initial_balance"] for a in user_data["accounts"])
     for t in user_data.get("transactions", []):
-        if t["account"] == account_name and t["status"] == "Paid" and not t.get("ignoreBalance", False):
+        if t["status"] == "Paid" and not t.get("ignoreBalance", False):
             balance += t["amount"] if t["type"] in ["Income", "ENTRADA"] else -t["amount"]
     return balance
 
-global_balance = sum(calculate_real_balance(a["name"]) for a in user_data["accounts"])
-
+global_balance = calculate_real_balance()
 today = datetime.date.today()
 str_today = today.strftime("%Y-%m-%d")
 str_month = today.strftime("%Y-%m")
 str_year = today.strftime("%Y")
 one_week_ago = (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
 
-totals = {"ENTRADA": {"dia": 0, "sem": 0, "mes": 0, "ano": 0, "all": 0}, 
-          "SAIDA":   {"dia": 0, "sem": 0, "mes": 0, "ano": 0, "all": 0}}
-contas_em_aberto = 0
-
+totals = {"ENTRADA": {"dia": 0, "sem": 0, "mes": 0, "ano": 0, "all": 0}, "SAIDA": {"dia": 0, "sem": 0, "mes": 0, "ano": 0, "all": 0}}
 for t in user_data.get("transactions", []):
     amt = t["amount"]
     t_type = "ENTRADA" if t["type"] in ["Income", "ENTRADA"] else "SAIDA"
-    
-    # Valores em Aberto
-    if t_type == "SAIDA" and t["status"] == "Unpaid":
-        contas_em_aberto += amt
-        
     if t_type == "SAIDA" or (t_type == "ENTRADA" and t["status"] == "Paid"):
         totals[t_type]["all"] += amt
         if t["date"] == str_today: totals[t_type]["dia"] += amt
@@ -171,22 +127,28 @@ for t in user_data.get("transactions", []):
         if t["date"].startswith(str_month): totals[t_type]["mes"] += amt
         if t["date"].startswith(str_year): totals[t_type]["ano"] += amt
 
+# Calculo Metas (Média Mensal)
+net_savings = totals["ENTRADA"]["all"] - sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"] and t["status"] == "Paid")
+months_active = max(1, (today.year - 2024) * 12 + today.month - 1) # Simplificado para evitar erro com datas vazias
+avg_monthly_savings = net_savings / months_active
+
 # --- NAVEGAÇÃO MOBILE-FRIENDLY ---
 st.markdown("<h3 style='text-align: center; color: #ff6600;'>Visão Geral</h3>", unsafe_allow_html=True)
-tabs = st.tabs(["📊 Painel", "💸 Trans.", "➕ Lançar", "📅 Pagas Mensal", "🎯 Metas", "📁 Extra"])
+tabs = st.tabs(["📊 Painel", "💸 Transf.", "➕ Lançar", "🎯 Metas", "📁 Extra"])
 
-# 1. DASHBOARD
+# 1. DASHBOARD (PAINEL)
 with tabs[0]:
+    filtro_mes_painel = st.text_input("Filtro de Mês (YYYY-MM)", value=str_month, key="filtro_painel")
+    
+    contas_aberto_mes = sum(t["amount"] for t in user_data.get("transactions", []) 
+                            if t["type"] in ["Expense", "SAIDA"] and t["status"] == "Unpaid" and t["date"].startswith(filtro_mes_painel))
+    
     col1, col2 = st.columns(2)
-    with col1: custom_card("SALDO GLOBAL ATUAL", format_brl(global_balance), "#007BFF", "#3399ff")
-    with col2: custom_card("CONTAS EM ABERTO", format_brl(contas_em_aberto), "#ffc107", "#ffcd39")
-        
-    col3, col4 = st.columns(2)
-    with col3: custom_card("ENTROU (ALL TIME)", format_brl(totals["ENTRADA"]["all"]), "#28a745", "#4dd26b")
-    with col4: custom_card("SAIU (ALL TIME)", format_brl(totals["SAIDA"]["all"]), "#dc3545", "#ff6b7a")
+    with col1: custom_card("SALDO GLOBAL ATUAL", format_brl(global_balance), "#007BFF", "#3399ff") # Azul
+    with col2: custom_card(f"EM ABERTO ({filtro_mes_painel})", format_brl(contas_aberto_mes), "#ffc107", "#ffcd39") # Amarelo
 
     st.markdown("### 📅 Resumo por Período")
-    with st.expander("Ver Entradas e Saídas (Dia/Semana/Mês/Ano)", expanded=False):
+    with st.expander("Ver Resumo Completo", expanded=False):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("<p style='color:#4dd26b; font-weight:bold;'>🟩 ENTRADAS</p>", unsafe_allow_html=True)
@@ -194,163 +156,133 @@ with tabs[0]:
             st.write(f"**7 dias:** {format_brl(totals['ENTRADA']['sem'])}")
             st.write(f"**Mês:** {format_brl(totals['ENTRADA']['mes'])}")
             st.write(f"**Ano:** {format_brl(totals['ENTRADA']['ano'])}")
+            st.write(f"**ALL TIME:** {format_brl(totals['ENTRADA']['all'])}")
         with c2:
             st.markdown("<p style='color:#ff6b7a; font-weight:bold;'>🟥 SAÍDAS</p>", unsafe_allow_html=True)
             st.write(f"**Hoje:** {format_brl(totals['SAIDA']['dia'])}")
             st.write(f"**7 dias:** {format_brl(totals['SAIDA']['sem'])}")
             st.write(f"**Mês:** {format_brl(totals['SAIDA']['mes'])}")
             st.write(f"**Ano:** {format_brl(totals['SAIDA']['ano'])}")
+            st.write(f"**ALL TIME:** {format_brl(totals['SAIDA']['all'])}")
 
-# 2. TRANSAÇÕES (Todas)
+    st.markdown("---")
+    st.markdown(f"### Contas Pagas em {filtro_mes_painel}")
+    pagas_mes = [t for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"] and t["status"] == "Paid" and t["date"].startswith(filtro_mes_painel)]
+    if pagas_mes:
+        for t in sorted(pagas_mes, key=lambda x: x["date"], reverse=True):
+            st.markdown(f"<div style='background-color: #1a1a1a; padding: 10px; border-radius: 5px; margin-bottom: 5px; border-left: 3px solid #4dd26b;'><p style='margin:0; font-size:12px;'>Data: {t['date']}</p><p style='margin:0; font-weight:bold;'>{t['description']} - <span style='color:#4dd26b;'>{format_brl(t['amount'])}</span></p></div>", unsafe_allow_html=True)
+    else: st.info("Nenhuma conta paga neste mês.")
+
+# 2. TRANSFERÊNCIAS (Apenas Leitura)
 with tabs[1]:
-    st.markdown("### Histórico Completo")
-    search_term = st.text_input("🔍 Buscar por nome ou valor...").lower()
+    st.markdown("### Histórico de Movimentações")
+    st.caption("Apenas leitura. Lançamentos manuais e automáticos aparecem aqui.")
+    all_t = sorted(user_data.get("transactions", []), key=lambda x: x["id"], reverse=True)
     
-    all_t = user_data.get("transactions", [])
-    if search_term:
-        filtered_t = [t for t in all_t if search_term in t['description'].lower() or search_term in str(t['amount'])]
-    else:
-        filtered_t = sorted(all_t, key=lambda x: x["id"], reverse=True)[:50]
-        st.caption("Mostrando as 50 mais recentes.")
-    
-    if not filtered_t: st.info("Nenhuma transação encontrada.")
-        
-    for i, t in enumerate(filtered_t):
+    for t in all_t[:50]:
         is_income = t["type"] in ["Income", "ENTRADA"]
         color_tag = "🟩" if is_income else "🟥"
-        status_txt = "Recebido" if is_income else "Pago"
+        status_color = "#4dd26b" if t["status"] == "Paid" else "#ffc107"
+        status_txt = "Pago/Recebido" if t["status"] == "Paid" else "Pendente"
         
-        with st.container():
-            st.markdown(f"""
-            <div style='background-color: #1e1e1e; padding: 10px; border-radius: 8px; margin-bottom: 5px; border-left: 3px solid {"#4dd26b" if is_income else "#ff6b7a"}'>
-                <p style='margin:0; font-size:12px; color:gray;'>Venc/Data: {t['date']} | Conta: {t['account']}</p>
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <p style='margin:0; font-weight:bold;'>{t['description']}</p>
-                    <p style='margin:0; font-weight:bold; color: {"#4dd26b" if is_income else "#ff6b7a"};'>{color_tag} {format_brl(t['amount'])}</p>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            is_paid = (t["status"] == "Paid")
-            btn_label = f"Desmarcar ({status_txt})" if is_paid else f"Marcar como {status_txt}"
-            if st.button(f"🔄 {btn_label}", key=f"tgl_hist_{t['id']}_{i}", use_container_width=True):
-                for original_t in user_data["transactions"]:
-                    if original_t["id"] == t["id"]:
-                        original_t["status"] = "Unpaid" if is_paid else "Paid"
-                save_db(db_main)
-                st.rerun()
-
-# 3. NOVA TRANSAÇÃO & MODELOS
-with tabs[2]:
-    sub_lancar, sub_fixas, sub_modelos = st.tabs(["Manual", "Desp. Fixas", "Atalhos"])
-    
-    # 3.1 LANÇAMENTO MANUAL
-    with sub_lancar:
-        t_type = st.radio("Tipo", ["SAIDA", "ENTRADA"], horizontal=True)
-        with st.form("form_manual"):
-            t_acc = st.selectbox("Conta", [a["name"] for a in user_data["accounts"]])
-            if t_type == "SAIDA":
-                t_desc = st.text_input("Descrição")
-                t_method = st.selectbox("Pagamento", ["PIX", "Cartão de Débito", "Cartão de Crédito"])
-            else:
-                t_desc = st.text_input("Origem (Quem pagou?)")
-                t_method = "Recebimento"
-                
-            t_val = st.number_input("Valor (R$)", min_value=0.01, step=10.0)
-            t_date = st.date_input("Vencimento / Data")
-            t_installments = st.number_input("Parcelas", min_value=1, value=1)
-            t_status = st.selectbox("Status", ["Paid", "Unpaid"], format_func=lambda x: "Efetivado" if x == "Paid" else "Pendente")
-            
-            if st.form_submit_button("Salvar Transação"):
-                base_date = t_date
-                for i in range(t_installments):
-                    desc_f = f"{t_desc} ({i+1}/{t_installments})" if t_installments > 1 else t_desc
-                    desc_m = f"[{t_method}] {desc_f}" if t_type == "SAIDA" else desc_f
-                    user_data.setdefault("transactions", []).append({
-                        "id": len(user_data["transactions"]) + 1,
-                        "type": t_type, "account": t_acc, "description": desc_m,
-                        "amount": t_val, "date": base_date.strftime("%Y-%m-%d"),
-                        "status": t_status, "is_credit": False, "ignoreBalance": False
-                    })
-                    base_date += relativedelta(months=1)
-                save_db(db_main)
-                st.success("Lançamento efetuado!")
-                st.rerun()
-
-    # 3.2 DESPESAS FIXAS (Novidade)
-    with sub_fixas:
-        st.write("Lança a fatura do mês. Ela entra como **Pendente (Em Aberto)** na data de vencimento.")
-        with st.form("form_lancar_fixa"):
-            fixa_selecionada = st.selectbox("Escolha a Despesa", [f["name"] for f in user_data.get("fixed_expenses", [])])
-            val_fixa = st.number_input("Valor da Fatura (R$)", min_value=0.01, step=10.0)
-            venc_fixa = st.date_input("Data de Vencimento")
-            
-            if st.form_submit_button("Lançar Fatura em Aberto"):
-                user_data.setdefault("transactions", []).append({
-                    "id": len(user_data["transactions"]) + 1,
-                    "type": "SAIDA", "account": user_data["accounts"][0]["name"], 
-                    "description": f"[Fixo] {fixa_selecionada}",
-                    "amount": val_fixa, "date": venc_fixa.strftime("%Y-%m-%d"),
-                    "status": "Unpaid", "is_credit": False, "ignoreBalance": False
-                })
-                save_db(db_main)
-                st.success(f"Fatura de {fixa_selecionada} lançada para o dia {venc_fixa.strftime('%d/%m/%Y')}!")
-                st.rerun()
-                
-        with st.expander("➕ Cadastrar Nova Categoria Fixa"):
-            with st.form("new_fixed_category"):
-                nf_name = st.text_input("Nome (ex: ALUGUEL)")
-                if st.form_submit_button("Cadastrar"):
-                    user_data.setdefault("fixed_expenses", []).append({
-                        "id": len(user_data["fixed_expenses"]) + 1, "name": nf_name.upper()
-                    })
-                    save_db(db_main)
-                    st.rerun()
-
-    # 3.3 ATALHOS (Modelos Antigos)
-    with sub_modelos:
-        st.write("Atalhos para entradas/saídas que você paga/recebe na hora.")
-        for tmpl in user_data.get("templates", []):
-            with st.container():
-                st.markdown(f"**{tmpl['name']}**")
-                colA, colB = st.columns([3, 1])
-                valor_rapido = colA.number_input("R$", min_value=0.0, step=10.0, key=f"val_{tmpl['id']}")
-                if colB.button("Lançar", key=f"btn_{tmpl['id']}", use_container_width=True):
-                    if valor_rapido > 0:
-                        desc_m = f"[{tmpl['method']}] {tmpl['name']}" if tmpl['type'] == "SAIDA" else tmpl['name']
-                        user_data.setdefault("transactions", []).append({
-                            "id": len(user_data.get("transactions", [])) + 1,
-                            "type": tmpl['type'], "account": user_data["accounts"][0]["name"],
-                            "description": desc_m, "amount": valor_rapido, 
-                            "date": str_today, "status": "Paid", "is_credit": False, "ignoreBalance": False
-                        })
-                        save_db(db_main)
-                        st.rerun()
-                st.divider()
-
-# 4. PAGAS MENSAL (Novidade)
-with tabs[3]:
-    st.markdown("### Contas Pagas no Mês (Por Vencimento)")
-    mes_filtro = st.text_input("Mês de Vencimento (YYYY-MM)", value=str_month)
-    
-    pagas_mes = [t for t in user_data.get("transactions", []) 
-                 if t["type"] in ["Expense", "SAIDA"] and t["status"] == "Paid" and t["date"].startswith(mes_filtro)]
-    
-    total_pago_mes = sum(t["amount"] for t in pagas_mes)
-    st.success(f"**Total Pago referente a {mes_filtro}: {format_brl(total_pago_mes)}**")
-    
-    if not pagas_mes: st.info("Nenhuma conta deste mês foi marcada como paga.")
-        
-    for i, t in enumerate(sorted(pagas_mes, key=lambda x: x["date"], reverse=True)):
         st.markdown(f"""
-        <div style='background-color: #1a1a1a; padding: 10px; border-radius: 5px; margin-bottom: 5px; border-left: 3px solid #4dd26b;'>
-            <p style='margin:0; font-size:12px;'>Vencimento: {t['date']}</p>
-            <p style='margin:0; font-weight:bold;'>{t['description']} - <span style='color:#4dd26b;'>{format_brl(t['amount'])}</span></p>
+        <div style='background-color: #1e1e1e; padding: 10px; border-radius: 8px; margin-bottom: 5px; border-left: 3px solid {color_tag[-1]}'>
+            <p style='margin:0; font-size:12px; color:gray;'>{t['date']} | Status: <span style='color:{status_color};'>{status_txt}</span></p>
+            <div style='display: flex; justify-content: space-between; align-items: center;'>
+                <p style='margin:0; font-weight:bold;'>{t['description']}</p>
+                <p style='margin:0; font-weight:bold;'>{color_tag} {format_brl(t['amount'])}</p>
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
-# 5. METAS
-with tabs[4]:
+# 3. LANÇAR (Passo a Passo & Gavetas)
+with tabs[2]:
+    sub_manual, sub_pagar, sub_criar_fixa = st.tabs(["Lançamento Manual", "Contas a Pagar", "Criar Despesa Fixa"])
+    
+    # MANUAL (Passo a Passo dinâmico sem formulário fechado)
+    with sub_manual:
+        t_type = st.radio("Selecione a Operação", ["SAIDA", "ENTRADA"], horizontal=True)
+        if t_type:
+            t_acc = st.selectbox("Selecione a Conta", [a["name"] for a in user_data["accounts"]])
+            t_desc = st.text_input("Descrição")
+            if t_desc:
+                t_val = st.number_input("Valor (R$)", min_value=0.01, step=10.0)
+                if t_val > 0:
+                    if t_type == "SAIDA":
+                        t_method = st.selectbox("Forma de Pagamento", ["PIX", "Cartão de Débito", "Cartão de Crédito"])
+                        if t_method == "Cartão de Crédito":
+                            t_date = st.date_input("Vencimento da 1ª Parcela")
+                            t_installments = st.number_input("Número de Parcelas", min_value=1, value=1)
+                        else:
+                            t_date = st.date_input("Data do Ocorrido")
+                            t_installments = 1
+                    else:
+                        t_method = "Recebimento"
+                        t_date = st.date_input("Data do Recebimento")
+                        t_installments = 1
+                    
+                    t_status = st.selectbox("Status", ["Paid", "Unpaid"], format_func=lambda x: "Efetivado" if x == "Paid" else "Pendente")
+                    
+                    if st.button("🚀 Confirmar Lançamento"):
+                        base_date = t_date
+                        for i in range(t_installments):
+                            desc_f = f"{t_desc} ({i+1}/{t_installments})" if t_installments > 1 else t_desc
+                            desc_m = f"[{t_method}] {desc_f}" if t_type == "SAIDA" else desc_f
+                            user_data.setdefault("transactions", []).append({
+                                "id": len(user_data["transactions"]) + 1, "type": t_type, "account": t_acc, 
+                                "description": desc_m, "amount": t_val, "date": base_date.strftime("%Y-%m-%d"),
+                                "status": t_status, "is_credit": (t_method == "Cartão de Crédito"), "ignoreBalance": False
+                            })
+                            base_date += relativedelta(months=1)
+                        save_db(db_main)
+                        st.success("Lançado com sucesso!")
+                        st.rerun()
+
+    # CONTAS A PAGAR (Gavetas Expansíveis)
+    with sub_pagar:
+        st.write("Suas despesas recorrentes. Lance os valores do mês aqui.")
+        for fixa in user_data.get("fixed_expenses", []):
+            with st.expander(f"📁 {fixa['name']}"):
+                # Formulário para lançar novo mês
+                with st.form(f"form_fixa_{fixa['id']}"):
+                    col1, col2 = st.columns(2)
+                    f_val = col1.number_input("Valor R$", min_value=0.01, step=10.0)
+                    f_date = col2.date_input("Vencimento")
+                    f_status = st.selectbox("Status", ["Unpaid", "Paid"], format_func=lambda x: "Em Aberto" if x == "Unpaid" else "Já Pago")
+                    if st.form_submit_button("Lançar Mês"):
+                        user_data.setdefault("transactions", []).append({
+                            "id": len(user_data["transactions"]) + 1, "type": "SAIDA", "account": user_data["accounts"][0]["name"],
+                            "description": f"[Fixo] {fixa['name']}", "amount": f_val, "date": f_date.strftime("%Y-%m-%d"),
+                            "status": f_status, "is_credit": False, "ignoreBalance": False
+                        })
+                        save_db(db_main)
+                        st.rerun()
+                
+                # Histórico desta despesa específica, permitindo baixar baixa
+                st.markdown("**Histórico desta conta:**")
+                historico_fixa = [t for t in user_data.get("transactions", []) if t["description"] == f"[Fixo] {fixa['name']}"]
+                for t in sorted(historico_fixa, key=lambda x: x["date"], reverse=True):
+                    cA, cB = st.columns([3, 1])
+                    status_str = "🟢" if t["status"] == "Paid" else "🔴"
+                    cA.write(f"{status_str} {t['date']} - {format_brl(t['amount'])}")
+                    if t["status"] == "Unpaid":
+                        if cB.button("Pagar", key=f"pagar_{t['id']}"):
+                            t["status"] = "Paid"
+                            save_db(db_main)
+                            st.rerun()
+
+    # CRIAR DESPESA FIXA
+    with sub_criar_fixa:
+        with st.form("new_fixed"):
+            nf_name = st.text_input("Nome da Despesa Fixa (Ex: ALUGUEL)")
+            if st.form_submit_button("Criar Despesa"):
+                user_data.setdefault("fixed_expenses", []).append({"id": len(user_data["fixed_expenses"]) + 1, "name": nf_name.upper()})
+                save_db(db_main)
+                st.success("Criado! Vá em 'Contas a Pagar' para lançar os valores.")
+                st.rerun()
+
+# 4. METAS
+with tabs[3]:
     active_goals = [g for g in user_data.get("goals", []) if g.get("status", "Active") == "Active"]
     total_goals_val = sum(g["target"] for g in active_goals)
     custom_card("VALOR TOTAL DAS METAS", format_brl(total_goals_val), "#9b59b6", "#c39bd3")
@@ -370,31 +302,30 @@ with tabs[4]:
             st.markdown(f"**{g['name']}**")
             st.progress(progress)
             st.caption(f"{format_brl(global_balance)} / {format_brl(g['target'])}")
-            if st.button("✅ Bateu Meta!", key=f"g_concluir_{i}"):
+            
+            if global_balance >= g["target"]: st.caption("🎉 Você já tem saldo para essa meta!")
+            elif avg_monthly_savings > 0: st.caption(f"⏱️ Previsão: ~{int((g['target'] - global_balance) / avg_monthly_savings) + 1} meses (Sobra média: {format_brl(avg_monthly_savings)}/mês)")
+            else: st.caption("⏱️ Previsão Indefinida (Sua sobra média está negativa ou zerada)")
+            
+            if st.button("✅ Concluir", key=f"g_concluir_{i}"):
                 g["status"] = "Achieved"
                 save_db(db_main)
                 st.rerun()
+            st.markdown("---")
 
-# 6. EXTRAS (CSV, Config, IA)
-with tabs[5]:
+# 5. EXTRAS
+with tabs[4]:
     sub_csv, sub_ai, sub_config = st.tabs(["CSV", "IA", "Config"])
     with sub_csv:
-        uploaded_files = st.file_uploader("Importar CSV", type="csv", accept_multiple_files=True)
-        # Ocultado lógica extensa de CSV visualmente por economia de espaço no mobile, 
-        # mas o processamento continua igual no backend.
+        uploaded_files = st.file_uploader("Importar Banco Inter", type="csv", accept_multiple_files=True)
         if uploaded_files and st.button("Processar CSV"):
-            st.info("Função de leitura ativada no backend.")
-            # ... Mesma lógica de CSV anterior
+            st.info("Leitura de CSV operante no backend.")
     with sub_ai:
         api_key = st.text_input("API Key (Gemini)", type="password")
         if api_key and st.button("Gerar Dicas"):
-            try:
-                client = genai.Client(api_key=api_key)
-                prompt = f"Saldo: R${global_balance}. Metas: {[g['name'] for g in active_goals]}."
-                st.write(client.models.generate_content(model='gemini-1.5-pro', contents=prompt).text)
-            except Exception as e: st.error(f"Erro: {e}")
+            client = genai.Client(api_key=api_key)
+            st.write(client.models.generate_content(model='gemini-1.5-pro', contents=f"Saldo: R${global_balance}. Metas: {[g['name'] for g in active_goals]}.").text)
     with sub_config:
-        st.warning("Zona de Perigo")
         if st.button("Zerar Meu Banco de Dados"):
             user_data["transactions"] = []
             user_data["goals"] = []

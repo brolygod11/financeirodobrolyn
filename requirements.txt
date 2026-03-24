@@ -2,3 +2,4 @@ streamlit
 pandas
 google-generativeai
 python-dateutil
+firebase-admin

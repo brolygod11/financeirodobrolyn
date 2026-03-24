@@ -6,47 +6,92 @@ import datetime
 from dateutil.relativedelta import relativedelta
 import google.generativeai as genai
 
-if "senha" not in st.session_state:
-    st.session_state.senha = False
-
-if not st.session_state.senha:
-    senha_digitada = st.text_input("Digite a senha de acesso:", type="password")
-    if st.button("Entrar"):
-        if senha_digitada == st.secrets["senha_acesso"]:
-            st.session_state.senha = True
-            st.rerun()
-        else:
-            st.error("Senha incorreta!")
-    st.stop()
-
-# Configuração da Página
 st.set_page_config(page_title="Financeiro Sayjins", layout="wide", initial_sidebar_state="collapsed")
 
 DATA_FILE = "finance_data.json"
 
-# --- Funções de Dados ---
-def load_data():
+# --- Sistema de Banco de Dados JSON ---
+def load_db():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"accounts": [], "transactions": [], "goals": [], "settings": {"credit_limit": 5000.0}}
+    # Se não existir, cria a estrutura base para os usuários
+    return {"users": {}}
 
-def save_data(data):
+def save_db(db_main):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
+        json.dump(db_main, f, indent=4)
 
 def format_brl(value):
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# Inicializa o Session State
-if 'db' not in st.session_state:
-    st.session_state.db = load_data()
+# Carrega o banco principal
+if 'db_main' not in st.session_state:
+    st.session_state.db_main = load_db()
 
-db = st.session_state.db
+# Variáveis de sessão para controle de login
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = ""
 
-# --- Sistema de Onboarding (Bloqueio) ---
+db_main = st.session_state.db_main
+
+# --- TELA DE LOGIN E REGISTRO ---
+if not st.session_state.logged_in:
+    st.title("⚡ Financeiro Sayjins")
+    
+    tab_login, tab_register = st.tabs(["Entrar", "Criar Conta"])
+    
+    with tab_login:
+        st.subheader("Acesse sua conta")
+        with st.form("login_form"):
+            user_login = st.text_input("Usuário")
+            pass_login = st.text_input("Senha", type="password")
+            if st.form_submit_button("Entrar"):
+                if user_login in db_main["users"] and db_main["users"][user_login]["password"] == pass_login:
+                    st.session_state.logged_in = True
+                    st.session_state.username = user_login
+                    st.rerun()
+                else:
+                    st.error("Usuário ou senha incorretos!")
+                    
+    with tab_register:
+        st.subheader("Novo por aqui?")
+        with st.form("register_form"):
+            new_user = st.text_input("Escolha um Usuário")
+            new_pass = st.text_input("Crie uma Senha", type="password")
+            if st.form_submit_button("Criar Conta"):
+                if not new_user or not new_pass:
+                    st.warning("Preencha usuário e senha!")
+                elif new_user in db_main["users"]:
+                    st.error("Esse usuário já existe. Escolha outro!")
+                else:
+                    # Cria a estrutura de dados limpa para o novo usuário
+                    db_main["users"][new_user] = {
+                        "password": new_pass,
+                        "data": {"accounts": [], "transactions": [], "goals": [], "settings": {"credit_limit": 5000.0}}
+                    }
+                    save_db(db_main)
+                    st.success("Conta criada com sucesso! Vá na aba 'Entrar' para acessar.")
+                    
+    st.stop() # Bloqueia o carregamento do resto do app se não estiver logado
+
+# --- CARREGA OS DADOS DO USUÁRIO LOGADO ---
+# A partir daqui, a variável 'db' isola apenas os dados de quem está logado
+username = st.session_state.username
+db = db_main["users"][username]["data"]
+
+# Botão de Logout na barra lateral
+with st.sidebar:
+    st.write(f"Logado como: **{username}**")
+    if st.button("Sair"):
+        st.session_state.logged_in = False
+        st.session_state.username = ""
+        st.rerun()
+
+# --- Sistema de Onboarding (Bloqueio Inicial) ---
 if not db["accounts"]:
-    st.title("🚀 Bem-vindo ao Financeiro Sayjins!")
+    st.title(f"🚀 Bem-vindo, {username}!")
     st.info("Para começar, precisamos configurar sua conta principal e seu saldo atual REAL.")
     with st.form("onboarding_form"):
         acc_name = st.text_input("Nome da Conta (ex: Nubank, Carteira)")
@@ -54,7 +99,7 @@ if not db["accounts"]:
         submitted = st.form_submit_button("Criar Conta e Entrar")
         if submitted and acc_name:
             db["accounts"].append({"id": 1, "name": acc_name, "initial_balance": acc_balance})
-            save_data(db)
+            save_db(db_main) # Salva no banco principal
             st.rerun()
     st.stop()
 
@@ -93,20 +138,18 @@ with tabs[0]:
     else:
         st.write("Nenhuma transação registrada.")
 
-# 2. Transações (Filtro)
+# 2. Transações
 with tabs[1]:
     filter_month = st.text_input("Filtrar por Mês (YYYY-MM)", value=datetime.datetime.now().strftime("%Y-%m"))
     filtered_t = [t for t in db["transactions"] if t["date"].startswith(filter_month)]
     
     for i, t in enumerate(filtered_t):
-        col_info, col_btn, col_del = st.columns([6, 2, 2])
+        col_info, col_btn = st.columns([8, 2])
         col_info.write(f"**{t['date']}** | {t['description']} | {t['account']} | {format_brl(t['amount'])}")
-        
-        # Botão para alternar status
         status_color = "🟢 Pago" if t["status"] == "Paid" else "🔴 Pendente"
         if col_btn.button(status_color, key=f"status_{t['id']}_{i}"):
             t["status"] = "Unpaid" if t["status"] == "Paid" else "Paid"
-            save_data(db)
+            save_db(db_main)
             st.rerun()
 
 # 3. Nova Transação
@@ -133,7 +176,7 @@ with tabs[2]:
                 }
                 db["transactions"].append(new_t)
                 base_date += relativedelta(months=1)
-            save_data(db)
+            save_db(db_main)
             st.success("Transação salva!")
             st.rerun()
 
@@ -150,7 +193,7 @@ with tabs[4]:
         g_target = st.number_input("Valor Alvo (R$)", min_value=1.0)
         if st.form_submit_button("Criar Meta"):
             db["goals"].append({"name": g_name, "target": g_target})
-            save_data(db)
+            save_db(db_main)
             st.rerun()
             
     for g in db["goals"]:
@@ -160,27 +203,26 @@ with tabs[4]:
 
 # 6. Importar CSV
 with tabs[5]:
-    st.info("Importa CSVs padrão Banco Inter. As transações não alterarão o saldo real (ignoreBalance = True).")
+    st.info("Importa CSV padrão Banco Inter.")
     uploaded_files = st.file_uploader("Escolha os arquivos CSV", type="csv", accept_multiple_files=True)
-    if uploaded_files:
-        if st.button("Processar Arquivos"):
-            for file in uploaded_files:
-                try:
-                    df = pd.read_csv(file, encoding='latin1', sep=';')
-                    for _, row in df.iterrows():
-                        db["transactions"].append({
-                            "id": len(db["transactions"]) + 1,
-                            "type": "Expense", # Lógica simplificada de detecção
-                            "account": db["accounts"][0]["name"],
-                            "description": str(row.get('Descrição', 'CSV Import')),
-                            "amount": abs(float(str(row.get('Valor', '0')).replace(',', '.'))),
-                            "date": str(row.get('Data', datetime.date.today())),
-                            "status": "Paid", "is_credit": False, "ignoreBalance": True
-                        })
-                    save_data(db)
-                    st.success("Arquivos processados com sucesso!")
-                except Exception as e:
-                    st.error(f"Erro ao ler arquivo: {e}")
+    if uploaded_files and st.button("Processar Arquivos"):
+        for file in uploaded_files:
+            try:
+                df = pd.read_csv(file, encoding='latin1', sep=';')
+                for _, row in df.iterrows():
+                    db["transactions"].append({
+                        "id": len(db["transactions"]) + 1,
+                        "type": "Expense",
+                        "account": db["accounts"][0]["name"],
+                        "description": str(row.get('Descrição', 'CSV Import')),
+                        "amount": abs(float(str(row.get('Valor', '0')).replace(',', '.'))),
+                        "date": str(row.get('Data', datetime.date.today())),
+                        "status": "Paid", "is_credit": False, "ignoreBalance": True
+                    })
+                save_db(db_main)
+                st.success("Arquivos processados com sucesso!")
+            except Exception as e:
+                st.error(f"Erro ao ler arquivo: {e}")
 
 # 7. AI Advisor
 with tabs[6]:
@@ -189,22 +231,14 @@ with tabs[6]:
     if api_key and st.button("Pedir Plano de Ação"):
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-pro')
-        prompt = f"""
-        Você é um conselheiro financeiro. 
-        Saldo global atual do usuário: R$ {global_balance}.
-        Receita histórica: R$ {all_time_income}.
-        Despesa histórica: R$ {all_time_expense}.
-        Metas ativas: {db['goals']}.
-        Crie um plano de ação curto e direto para melhorar a saúde financeira e atingir as metas.
-        """
-        response = model.generate_content(prompt)
-        st.write(response.text)
+        prompt = f"Saldo: R$ {global_balance}. Receita: R$ {all_time_income}. Despesa: R$ {all_time_expense}. Metas: {db['goals']}. Crie um plano de ação."
+        st.write(model.generate_content(prompt).text)
 
 # 8. Configurações
 with tabs[7]:
     new_limit = st.number_input("Limite Total de Crédito (R$)", value=db["settings"]["credit_limit"])
     if st.button("Salvar Configurações"):
         db["settings"]["credit_limit"] = new_limit
-        save_data(db)
+        save_db(db_main)
         st.success("Atualizado!")
         st.rerun()

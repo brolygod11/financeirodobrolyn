@@ -129,22 +129,49 @@ saiu_alltime = sum(t["amount"] for t in user_data.get("transactions", []) if t["
 unpaid_credit = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"] and t.get("is_credit") and t["status"] == "Unpaid")
 available_credit = user_data["settings"]["credit_limit"] - unpaid_credit
 
+# Cálculos para previsão das metas (Média Mensal)
+paid_income = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Income", "ENTRADA"] and t["status"] == "Paid")
+paid_expense = sum(t["amount"] for t in user_data.get("transactions", []) if t["type"] in ["Expense", "SAIDA"] and t["status"] == "Paid")
+net_savings = paid_income - paid_expense
+
+if user_data.get("transactions"):
+    df_t = pd.DataFrame(user_data["transactions"])
+    df_t['date'] = pd.to_datetime(df_t['date'], errors='coerce')
+    min_date = df_t['date'].min()
+    max_date = df_t['date'].max()
+    if pd.notna(min_date) and pd.notna(max_date):
+        months_active = (max_date.year - min_date.year) * 12 + max_date.month - min_date.month
+        months_active = max(1, months_active)
+    else:
+        months_active = 1
+else:
+    months_active = 1
+
+avg_monthly_savings = net_savings / months_active
+
+# Dados para o card de Metas
+active_goals = [g for g in user_data.get("goals", []) if g.get("status", "Active") == "Active"]
+total_goals_val = sum(g["target"] for g in active_goals)
+
 # --- Abas (Tabs) ---
 st.title("Financeiro Sayjins ⚡")
 tabs = st.tabs(["Dashboard", "Transações", "Nova Transação", "Contas", "Metas", "Importar CSV", "AI Advisor", "Configurações"])
 
 # 1. Dashboard
 with tabs[0]:
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Saldo Global Atual", format_brl(global_balance))
     col2.metric("ENTROU ALLTIME", format_brl(entrou_alltime))
     col3.metric("SAIU ALLTIME", format_brl(saiu_alltime))
     col4.metric("Limite de Crédito Disp.", format_brl(available_credit))
+    col5.metric("METAS ATIVAS", format_brl(total_goals_val), f"{len(active_goals)} pendentes", delta_color="off")
     
     st.subheader("Últimas Transações")
     if user_data.get("transactions"):
-        df_recent = pd.DataFrame(user_data["transactions"]).tail(100)[["date", "description", "account", "type", "amount", "status"]]
-        st.dataframe(df_recent, width="stretch") # Corrigido o aviso do Streamlit aqui
+        df_recent = pd.DataFrame(user_data["transactions"])
+        # Ordena pelo ID em ordem decrescente (mais recentes primeiro)
+        df_recent = df_recent.sort_values(by="id", ascending=False).head(100)[["id", "date", "description", "account", "type", "amount", "status"]]
+        st.dataframe(df_recent, width="stretch", hide_index=True)
     else:
         st.write("Nenhuma transação registrada.")
 
@@ -152,6 +179,9 @@ with tabs[0]:
 with tabs[1]:
     filter_month = st.text_input("Filtrar por Mês (YYYY-MM)", value=datetime.datetime.now().strftime("%Y-%m"))
     filtered_t = [t for t in user_data.get("transactions", []) if t["date"].startswith(filter_month)]
+    
+    # Exibe também os mais recentes no topo dentro da aba de transações filtradas
+    filtered_t.sort(key=lambda x: x["id"], reverse=True)
     
     for i, t in enumerate(filtered_t):
         col_info, col_btn = st.columns([8, 2])
@@ -162,15 +192,13 @@ with tabs[1]:
             save_db(db_main)
             st.rerun()
 
-# 3. Nova Transação (Reestruturada para Funcionar Dinamicamente)
+# 3. Nova Transação
 with tabs[2]:
-    # A escolha fica FORA do formulário para a tela atualizar na hora
     t_type = st.radio("Tipo de Lançamento", ["SAIDA", "ENTRADA"], horizontal=True)
     
     with st.form("new_transaction"):
         t_acc = st.selectbox("Conta", [a["name"] for a in user_data["accounts"]])
         
-        # UI muda dependendo da escolha
         if t_type == "SAIDA":
             t_desc = st.text_input("Descrição da Despesa")
             t_method = st.selectbox("Forma de Pagamento", ["PIX", "Cartão de Débito", "Cartão de Crédito"])
@@ -180,7 +208,7 @@ with tabs[2]:
             t_status = st.selectbox("Status", ["Paid", "Unpaid"], format_func=lambda x: "Pago" if x == "Paid" else "Pendente")
         else:
             t_desc = st.text_input("Nome de quem enviou (Origem)")
-            t_method = "Recebimento" # Invisível para o usuário, usado apenas internamente
+            t_method = "Recebimento"
             t_val = st.number_input("Valor Recebido (R$)", min_value=0.01, step=10.0)
             t_date = st.date_input("Data do Recebimento")
             t_installments = 1
@@ -189,12 +217,9 @@ with tabs[2]:
         if st.form_submit_button("Salvar Lançamento"):
             base_date = t_date
             for i in range(t_installments):
-                # Anexa o número da parcela se for maior que 1
                 desc_final = f"{t_desc} ({i+1}/{t_installments})" if t_installments > 1 else t_desc
-                # Adiciona a forma de pagamento no nome para ficar visual na tabela
                 desc_with_method = f"[{t_method}] {desc_final}" if t_type == "SAIDA" else desc_final
                 
-                # Regra de Limite de Crédito
                 is_credit = True if (t_type == "SAIDA" and t_method == "Cartão de Crédito") else False
                 
                 new_t = {
@@ -232,14 +257,35 @@ with tabs[4]:
         if st.form_submit_button("Criar Meta"):
             if "goals" not in user_data:
                 user_data["goals"] = []
-            user_data["goals"].append({"name": g_name, "target": g_target})
+            user_data["goals"].append({"name": g_name, "target": g_target, "status": "Active"})
             save_db(db_main)
             st.rerun()
             
-    for g in user_data.get("goals", []):
-        progress = min(global_balance / g["target"], 1.0) if global_balance > 0 else 0.0
-        st.write(f"**{g['name']}**: {format_brl(global_balance)} / {format_brl(g['target'])}")
-        st.progress(progress)
+    for i, g in enumerate(user_data.get("goals", [])):
+        if g.get("status", "Active") == "Active":
+            progress = min(global_balance / g["target"], 1.0) if global_balance > 0 else 0.0
+            
+            col_g1, col_g2 = st.columns([8, 2])
+            col_g1.write(f"**{g['name']}**: {format_brl(global_balance)} / {format_brl(g['target'])}")
+            
+            if col_g2.button("✅ Concluir Meta", key=f"goal_btn_{i}"):
+                g["status"] = "Achieved"
+                save_db(db_main)
+                st.rerun()
+                
+            st.progress(progress)
+            
+            if global_balance >= g["target"]:
+                st.caption("🎉 Você já tem saldo para alcançar essa meta!")
+            elif avg_monthly_savings > 0:
+                months_left = (g["target"] - global_balance) / avg_monthly_savings
+                st.caption(f"⏱️ Previsão: ~{int(months_left) + 1} meses (com base na sua sobra média mensal)")
+            else:
+                st.caption("⏱️ Previsão: Indefinida (Sua sobra média mensal está negativa ou zerada)")
+                
+            st.markdown("---")
+        else:
+            st.success(f"🎉 **{g['name']}** - Concluída! ({format_brl(g['target'])})")
 
 # 6. Importar CSV
 with tabs[5]:
@@ -302,9 +348,8 @@ with tabs[6]:
     api_key = st.text_input("Sua Chave API do Google Gemini", type="password")
     if api_key and st.button("Pedir Plano de Ação"):
         try:
-            # Corrigido o código para a nova biblioteca google-genai
             client = genai.Client(api_key=api_key)
-            prompt = f"Saldo: R$ {global_balance}. Entrou All-Time: R$ {entrou_alltime}. Saiu All-Time: R$ {saiu_alltime}. Metas: {user_data.get('goals', [])}. Crie um plano de ação."
+            prompt = f"Saldo: R$ {global_balance}. Entrou All-Time: R$ {entrou_alltime}. Saiu All-Time: R$ {saiu_alltime}. Metas ativas: {[g['name'] for g in active_goals]}. Crie um plano de ação."
             response = client.models.generate_content(model='gemini-1.5-pro', contents=prompt)
             st.write(response.text)
         except Exception as e:

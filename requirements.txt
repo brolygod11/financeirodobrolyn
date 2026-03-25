@@ -3,3 +3,4 @@ pandas
 python-dateutil
 firebase-admin
 google-genai
+plotly

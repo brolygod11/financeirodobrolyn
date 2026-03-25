@@ -97,7 +97,7 @@ if not st.session_state.logged_in:
             u_in = st.text_input("Nome de Usuário")
             p_in = st.text_input("Senha de Acesso", type="password")
             if st.form_submit_button("Entrar no Sistema"):
-                u = u_in.strip().lower() # Evita erros de teclado de celular
+                u = u_in.strip().lower()
                 if u in db_main.get("users", {}) and db_main["users"][u]["password"] == p_in.strip():
                     st.session_state.logged_in = True; st.session_state.username = u; st.rerun()
                 else: st.error("Acesso Negado. Verifique os dados inseridos.")
@@ -140,17 +140,14 @@ tabs = st.tabs(["📊 Painel", "💸 Histórico", "➕ Lançar", "🎯 Cofre/Met
 with tabs[0]:
     f_mes = st.text_input("Calendário (YYYY-MM)", value=str_mes)
     
-    # Cálculos Dinâmicos
     aberto = sum(t["amount"] for t in u_data["transactions"] if t.get("status") == "Unpaid" and t.get("type") == "SAIDA" and str(t.get("date", "")).startswith(f_mes))
     pago_mes = sum(t["amount"] for t in u_data["transactions"] if t.get("status") == "Paid" and t.get("type") == "SAIDA" and str(t.get("date", "")).startswith(f_mes))
     entrou_mes = sum(t["amount"] for t in u_data["transactions"] if t.get("status") == "Paid" and t.get("type") == "ENTRADA" and str(t.get("date", "")).startswith(f_mes))
     
-    # Resumo
     c1, c2 = st.columns(2)
     with c1: custom_card("SALDO LIVRE", format_brl(global_balance), "#007BFF", "#3399ff")
     with c2: custom_card(f"ABERTO ({f_mes})", format_brl(aberto), "#ffc107", "#ffcd39")
 
-    # Área de Gráficos (Estilo App Nativo)
     st.markdown("### 📈 Inteligência Visual")
     
     if aberto > 0 or pago_mes > 0:
@@ -326,7 +323,6 @@ with tabs[3]:
                 
     st.markdown("---")
     st.write("### 🎯 Objetivos de Vida")
-    st.caption("O progresso das metas é alimentado exclusivamente pela sua Reserva no Cofre.")
     
     if st.button("➕ Adicionar Novo Objetivo"): st.session_state.nm = True
     if st.session_state.get("nm"):
@@ -354,32 +350,38 @@ with tabs[4]:
     
     with s_ai:
         st.write("### Auditoria por IA")
-        st.caption("Insira sua chave do Google AI Studio. O sistema fará múltiplas tentativas para encontrar o modelo compatível.")
         ak = st.text_input("Chave API de Desenvolvedor", type="password")
         if ak and st.button("Iniciar Análise Financeira"):
             with st.spinner("Conectando ao núcleo do Google Gemini..."):
                 try:
                     c = genai.Client(api_key=ak)
-                    prompt_text = f"Resumo rápido: Saldo R${global_balance}. Cofre R${u_data['cofre']}. Analise isso como um gestor financeiro rigoroso."
+                    prompt_text = f"Resumo: Saldo livre R${global_balance}. Cofre R${u_data['cofre']}. Analise isso de forma dura e direta."
                     
-                    # SISTEMA DE FALLBACK (BLINDAGEM CONTRA O ERRO 404)
-                    modelos_disponiveis = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro', 'gemini-2.0-flash']
-                    resposta = None
+                    # TENTA MÚLTIPLOS MODELOS ATÉ ACHAR UM QUE A SUA CHAVE ACEITE
+                    modelos_para_testar = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b']
+                    resposta_ia = None
+                    erros_log = []
                     
-                    for modelo in modelos_disponiveis:
+                    for modelo in modelos_para_testar:
                         try:
-                            resposta = c.models.generate_content(model=modelo, contents=prompt_text)
-                            if resposta: break
-                        except:
-                            continue # Pula para o próximo modelo se der erro 404
+                            resposta_ia = c.models.generate_content(model=modelo, contents=prompt_text)
+                            if resposta_ia: 
+                                break # Achou um modelo que funciona, para o loop!
+                        except Exception as e:
+                            erros_log.append(f"Modelo {modelo} falhou: {e}")
+                            continue
                     
-                    if resposta:
+                    if resposta_ia:
                         st.success("Análise Concluída.")
-                        st.write(resposta.text)
+                        st.write(resposta_ia.text)
                     else:
-                        st.error("⚠️ Falha Crítica: Sua chave não autorizou o uso de nenhum modelo de texto. Acesse o AI Studio e gere uma nova chave de API.")
+                        st.error("⚠️ Falha Crítica: Sua chave não ativou nenhum modelo.")
+                        with st.expander("Ver log de erros técnicos (Copie isso para mim se falhar)"):
+                            for erro in erros_log:
+                                st.write(erro)
+                                
                 except Exception as e: 
-                    st.error(f"Erro do Sistema: {e}")
+                    st.error(f"Erro fatal na conexão: {e}")
             
     with s_csv:
         st.write("### Migração de Dados")

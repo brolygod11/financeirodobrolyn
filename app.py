@@ -8,7 +8,7 @@ from firebase_admin import credentials, db
 import plotly.graph_objects as go
 import uuid
 
-# Configuração 9:16 (Mobile-First)
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Financeiro Sayjins", layout="centered", initial_sidebar_state="collapsed")
 
 # --- CUSTOM CSS (Geometria, Espaçamentos e Dark Theme) ---
@@ -49,13 +49,13 @@ def custom_card(title, value, border_color, text_color):
         </div>
     """, unsafe_allow_html=True)
 
-# --- Firebase ---
+# --- FIREBASE ---
 if not firebase_admin._apps:
     try:
         cred = credentials.Certificate(dict(st.secrets["firebase_key"]))
         firebase_admin.initialize_app(cred, {'databaseURL': st.secrets["database_url"]})
-    except:
-        st.error("Erro no Firebase.")
+    except Exception as e:
+        st.error(f"Erro no Firebase: {e}")
         st.stop()
 
 def load_db(): return db.reference('/').get() or {"users": {}}
@@ -81,7 +81,7 @@ if not st.session_state.logged_in:
                 u = u_in.strip().lower()
                 if u in db_main.get("users", {}) and db_main["users"][u]["password"] == p_in.strip():
                     st.session_state.logged_in = True; st.session_state.username = u; st.rerun()
-                else: st.error("Dados incorretos.")
+                else: st.error("Dados incorretos. Verifique letras maiúsculas ou espaços.")
     with t2:
         with st.form("reg_f"):
             nu_in = st.text_input("Novo Usuário")
@@ -90,66 +90,91 @@ if not st.session_state.logged_in:
                 nu = nu_in.strip().lower()
                 if nu and np_in:
                     db_main.setdefault("users", {})[nu] = {"password": np_in.strip(), "data": {"accounts": [{"id":1, "name":"Principal", "initial_balance":0.0}], "transactions": [], "goals": [], "fixed_expenses": [], "cofre": 0.0}}
-                    save_db(db_main); st.success("Criado com sucesso!"); st.rerun()
+                    save_db(db_main); st.success("Criado com sucesso! Vá em Acessar."); st.rerun()
     st.stop()
 
+# --- CARREGAR DADOS ---
 u_name = st.session_state.username
 u_data = db_main["users"][u_name]["data"]
 u_data.setdefault("fixed_expenses", [])
 u_data.setdefault("transactions", [])
 u_data.setdefault("cofre", 0.0)
 
-# --- SALDO REAL (Subtraindo o Cofre) ---
+# --- CÁLCULO DE SALDO ---
 def get_balance():
     b = sum(a.get("initial_balance", 0) for a in u_data.get("accounts", []))
     for t in u_data["transactions"]:
         if t.get("status") == "Paid" and not t.get("ignoreBalance"):
             b += t["amount"] if t["type"] == "ENTRADA" else -t["amount"]
-    return b - u_data["cofre"]
+    return b - u_data["cofre"] # O Cofre segura o dinheiro das metas
 
 global_balance = get_balance()
 hoje = datetime.date.today()
 str_mes = hoje.strftime("%Y-%m")
 
 # --- NAVEGAÇÃO ---
-tabs = st.tabs(["📊 Painel", "💸 Histórico", "➕ Lançar", "🎯 Metas/Cofre", "⚙️ Extra"])
+tabs = st.tabs(["📊 Painel", "💸 Histórico", "➕ Lançar", "🎯 Cofre/Metas", "⚙️ Extra"])
 
-# 1. PAINEL (DASHBOARD PRO)
+# ==========================================
+# 1. PAINEL (DASHBOARD REDESENHADO)
+# ==========================================
 with tabs[0]:
     f_mes = st.text_input("Mês Filtro (YYYY-MM)", value=str_mes)
+    
+    # Cálculos Dinâmicos do Mês
     aberto = sum(t["amount"] for t in u_data["transactions"] if t.get("status") == "Unpaid" and t.get("type") == "SAIDA" and str(t.get("date", "")).startswith(f_mes))
     pago_mes = sum(t["amount"] for t in u_data["transactions"] if t.get("status") == "Paid" and t.get("type") == "SAIDA" and str(t.get("date", "")).startswith(f_mes))
     entrou_mes = sum(t["amount"] for t in u_data["transactions"] if t.get("status") == "Paid" and t.get("type") == "ENTRADA" and str(t.get("date", "")).startswith(f_mes))
     
+    # Cards Principais
     c1, c2 = st.columns(2)
     with c1: custom_card("SALDO LIVRE", format_brl(global_balance), "#007BFF", "#3399ff")
     with c2: custom_card(f"ABERTO ({f_mes})", format_brl(aberto), "#ffc107", "#ffcd39")
 
-    # Gráficos de Inteligência Visual
-    st.markdown("### 📈 Visão Financeira")
+    # Gráficos de Inteligência Visual (Compactos e Modernos)
+    st.markdown("### 📈 Visão Gráfica")
     
-    # Gráfico 1: Rosca (Despesas do Mês)
-    if aberto > 0 or pago_mes > 0:
-        fig_pie = go.Figure(data=[go.Pie(labels=['Já Pago', 'A Pagar (Aberto)'], values=[pago_mes, aberto], hole=.5, marker_colors=['#4dd26b', '#ffc107'])])
-        fig_pie.update_layout(title="Situação das Despesas do Mês", paper_bgcolor='rgba(0,0,0,0)', font_color='white', margin=dict(t=40, b=10, l=10, r=10))
-        st.plotly_chart(fig_pie, use_container_width=True)
+    col_g1, col_g2 = st.columns(2)
     
-    # Gráfico 2: Barras (Balanço do Mês)
-    fig_bar = go.Figure(data=[
-        go.Bar(name='Receitas', x=['Balanço'], y=[entrou_mes], marker_color='#4dd26b'),
-        go.Bar(name='Despesas', x=['Balanço'], y=[aberto + pago_mes], marker_color='#ff6b7a')
-    ])
-    fig_bar.update_layout(barmode='group', title="Entradas vs Saídas Projetadas", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white', margin=dict(t=40, b=10, l=10, r=10))
-    st.plotly_chart(fig_bar, use_container_width=True)
+    with col_g1:
+        if aberto > 0 or pago_mes > 0:
+            fig_pie = go.Figure(data=[go.Pie(labels=['Já Pago', 'Em Aberto'], values=[pago_mes, aberto], hole=.7, marker_colors=['#4dd26b', '#ffc107'], textinfo='none')])
+            fig_pie.update_layout(
+                title=dict(text="Despesas do Mês", font=dict(size=14, color="white")),
+                showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5, font=dict(size=10)),
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(t=30, b=0, l=0, r=0), height=220
+            )
+            st.plotly_chart(fig_pie, use_container_width=True, config={'displayModeBar': False})
+        else:
+            st.info("Sem despesas registradas no mês.")
+            
+    with col_g2:
+        if entrou_mes > 0 or (aberto + pago_mes) > 0:
+            fig_bar = go.Figure(data=[
+                go.Bar(name='Receitas', x=['Balanço'], y=[entrou_mes], marker_color='#4dd26b', textposition='none'),
+                go.Bar(name='Despesas', x=['Balanço'], y=[aberto + pago_mes], marker_color='#ff6b7a', textposition='none')
+            ])
+            fig_bar.update_layout(
+                barmode='group',
+                title=dict(text="Entradas vs Saídas", font=dict(size=14, color="white")),
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(t=30, b=0, l=0, r=0), height=220,
+                xaxis=dict(showgrid=False, showticklabels=False), yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+                showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5, font=dict(size=10))
+            )
+            st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
+        else:
+            st.info("Sem movimentações registradas no mês.")
 
     st.markdown("### 📅 Pagos no Mês")
     pagos = [t for t in u_data["transactions"] if t.get("status") == "Paid" and t.get("type") == "SAIDA" and str(t.get("date", "")).startswith(f_mes)]
     if pagos:
-        for t in pagos:
-            st.markdown(f"<div style='background-color:#161616; padding:12px; border-radius:8px; border-left:4px solid #4dd26b; margin-bottom:8px; font-size:14px;'>{t['date']} | {t['description']} | <b>{format_brl(t['amount'])}</b></div>", unsafe_allow_html=True)
-    else: st.caption("Nenhum pagamento registrado no filtro.")
+        for t in sorted(pagos, key=lambda x: x['date'], reverse=True):
+            st.markdown(f"<div style='background-color:#161616; padding:12px; border-radius:8px; border-left:4px solid #4dd26b; margin-bottom:8px; font-size:13px;'>{t['date']} | {t['description']} | <b>{format_brl(t['amount'])}</b></div>", unsafe_allow_html=True)
+    else: st.caption("Nenhum pagamento efetivado no filtro.")
 
-# 2. HISTÓRICO (EXCLUSÃO EM MASSA)
+# ==========================================
+# 2. HISTÓRICO (COM EXCLUSÃO EM MASSA)
+# ==========================================
 with tabs[1]:
     st.write("### Últimas Movimentações")
     all_t = sorted(u_data["transactions"], key=lambda x: x.get('id', 0), reverse=True)
@@ -160,23 +185,24 @@ with tabs[1]:
         grp = t.get("group_id")
         
         with st.container():
-            st.markdown(f"<div style='background-color:#161616; padding:12px; border-radius:8px; border-left:4px solid {cor}; margin-bottom:5px; font-size:14px;'>{t['date']} - {t['description']} - <b style='color:{cor}'>{format_brl(t['amount'])}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='background-color:#161616; padding:12px; border-radius:8px; border-left:4px solid {cor}; margin-bottom:5px; font-size:13px;'>{t['date']} - {t['description']} - <b style='color:{cor}'>{format_brl(t['amount'])}</b></div>", unsafe_allow_html=True)
             
             c_del1, c_del2 = st.columns(2)
-            if c_del1.button("🗑️ Excluir Unidade", key=f"d1_{t['id']}_{i}"):
+            if c_del1.button("🗑️ Excluir", key=f"d1_{t['id']}_{i}"):
                 u_data["transactions"] = [tr for tr in u_data["transactions"] if tr.get('id') != t.get('id')]
                 save_db(db_main); st.rerun()
             
-            # Se a transação pertence a um grupo (foi parcelada), permite excluir todas de uma vez
             if grp:
-                if c_del2.button("⚠️ Excluir Todas Parcelas", key=f"d2_{t['id']}_{i}"):
+                if c_del2.button("⚠️ Excluir Parcelamento", key=f"d2_{t['id']}_{i}"):
                     u_data["transactions"] = [tr for tr in u_data["transactions"] if tr.get('group_id') != grp]
                     save_db(db_main); st.rerun()
             st.markdown("<br>", unsafe_allow_html=True)
 
-# 3. LANÇAR (Com iFood VR)
+# ==========================================
+# 3. LANÇAR (COM IFOOD VR)
+# ==========================================
 with tabs[2]:
-    m_man, m_fix = st.tabs(["Lançamento", "Gavetas (Fixas)"])
+    m_man, m_fix = st.tabs(["Lançamento Manual", "Contas Fixas"])
     
     with m_man:
         op = st.radio("Operação", ["SAIDA", "ENTRADA"], horizontal=True)
@@ -192,7 +218,7 @@ with tabs[2]:
                 else:
                     d = st.date_input("Data do Gasto")
                     inst = 1
-                # Se for iFood, Débito ou PIX, já entra como Pago.
+                
                 status_idx = 1 if metodo == "Cartão de Crédito" else 0
                 st_sel = st.selectbox("Status", ["Paid", "Unpaid"], index=status_idx, format_func=lambda x: "Efetivado" if x=="Paid" else "Em Aberto")
             else:
@@ -203,7 +229,7 @@ with tabs[2]:
 
             if st.button("🚀 Confirmar Lançamento"):
                 base_date = d
-                g_id = str(uuid.uuid4()) if inst > 1 else None # Cria um ID de Grupo para exclusão em massa
+                g_id = str(uuid.uuid4()) if inst > 1 else None 
                 
                 for i in range(inst):
                     dfinal = f"{desc} ({i+1}/{inst})" if inst > 1 else desc
@@ -241,35 +267,37 @@ with tabs[2]:
                     save_db(db_main); st.rerun()
 
         st.markdown("---")
-        nf = st.text_input("Nova Gaveta (Ex: LUZ)")
+        nf = st.text_input("Nova Gaveta Fixa (Ex: LUZ)")
         if st.button("Criar Gaveta"):
             new_id_f = max([f.get('id', 0) for f in u_data["fixed_expenses"]], default=0) + 1
             u_data["fixed_expenses"].append({"id": new_id_f, "name": nf.upper()})
             save_db(db_main); st.rerun()
 
-# 4. METAS & COFRE
+# ==========================================
+# 4. METAS E COFRE
+# ==========================================
 with tabs[3]:
     st.write("### 🔒 Meu Cofre")
     custom_card("SALDO NO COFRE", format_brl(u_data["cofre"]), "#9b59b6", "#c39bd3")
     
     with st.expander("Movimentar Cofre"):
         c_op = st.radio("Operação", ["Guardar", "Resgatar (Devolver ao Saldo)"], horizontal=True)
-        c_val = st.number_input("Valor a movimentar", min_value=0.01)
-        if st.button("Confirmar Cofre"):
+        c_val = st.number_input("Valor R$", min_value=0.01)
+        if st.button("Confirmar Movimentação"):
             if c_op == "Guardar":
                 if c_val <= global_balance:
                     u_data["cofre"] += c_val
-                    save_db(db_main); st.success("Dinheiro guardado!"); st.rerun()
+                    save_db(db_main); st.success("Guardado!"); st.rerun()
                 else: st.error("Saldo Livre insuficiente.")
             else:
                 if c_val <= u_data["cofre"]:
                     u_data["cofre"] -= c_val
-                    save_db(db_main); st.success("Dinheiro resgatado!"); st.rerun()
-                else: st.error("Você não tem tudo isso no cofre.")
+                    save_db(db_main); st.success("Resgatado!"); st.rerun()
+                else: st.error("Você não tem esse valor no cofre.")
                 
     st.markdown("---")
     st.write("### 🎯 Minhas Metas")
-    st.caption("As metas agora usam o dinheiro do seu Cofre para avançar.")
+    st.caption("As metas progridem com base no dinheiro que está no seu Cofre.")
     
     if st.button("➕ Nova Meta"): st.session_state.nm = True
     if st.session_state.get("nm"):
@@ -281,7 +309,6 @@ with tabs[3]:
                 
     for i, g in enumerate(u_data.get("goals", [])):
         if g.get("status") == "Active":
-            # Progresso baseado no Cofre
             prog = max(0.0, min(u_data["cofre"] / g["target"], 1.0)) if g["target"] > 0 else 0.0
             st.write(f"**{g['name']}**")
             st.progress(prog)
@@ -289,23 +316,41 @@ with tabs[3]:
             if st.button("✅ Concluir Meta", key=f"m_{i}"):
                 g["status"] = "Achieved"; save_db(db_main); st.rerun()
 
-# 5. EXTRA (IA & CSV)
+# ==========================================
+# 5. EXTRA (IA E CSV)
+# ==========================================
 with tabs[4]:
-    s_ai, s_csv, s_config = st.tabs(["🧠 IA", "📁 CSV", "⚙️ Sistema"])
+    s_ai, s_csv, s_config = st.tabs(["🧠 IA", "📁 CSV", "⚙️ Sis"])
     with s_ai:
-        st.write("Conecte a Inteligência Artificial para analisar suas finanças.")
+        st.write("Análise Financeira IA")
         ak = st.text_input("Chave API Gemini", type="password")
-        if ak and st.button("Pedir Análise"):
+        if ak and st.button("Analisar"):
             try:
                 c = genai.Client(api_key=ak)
-                st.write(c.models.generate_content(model='gemini-1.5-pro', contents=f"Tenho R${global_balance} livre e R${u_data['cofre']} guardado. Minhas metas são {[g['name'] for g in u_data.get('goals', [])]}. Faça uma análise curta e dura como um guerreiro.").text)
-            except Exception as e: st.error(f"Erro: {e}")
+                # Alterado para gemini-1.5-flash para resolver erro 404 e aumentar a velocidade
+                res = c.models.generate_content(model='gemini-1.5-flash', contents=f"Meu saldo livre: R${global_balance}. Cofre: R${u_data['cofre']}. Analise curto e direto.")
+                st.write(res.text)
+            except Exception as e: st.error(f"Erro na IA: {e}")
             
     with s_csv:
         up = st.file_uploader("Subir CSV", type="csv", accept_multiple_files=True)
         if up and st.button("Processar"):
-            st.info("Função de processamento ativada.")
-            # Lê o CSV e salva com ignoreBalance = True
+            for f in up:
+                df = pd.read_csv(f, encoding='utf-8', sep=';', skiprows=5)
+                df.columns = df.columns.str.strip()
+                for _, row in df.iterrows():
+                    if pd.isna(row.get('Data Lançamento')): continue
+                    v_s = str(row.get('Valor', '0')).replace('.', '').replace(',', '.')
+                    v_v = abs(float(v_s))
+                    t_t = "SAIDA" if float(v_s) < 0 else "ENTRADA"
+                    desc = (str(row.get('Histórico', '')) + " " + str(row.get('Descrição', ''))).replace("nan", "").strip()
+                    try: p_date = datetime.datetime.strptime(str(row.get('Data Lançamento', '')).strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+                    except: p_date = hoje.strftime("%Y-%m-%d")
+                    new_id = max([t.get('id', 0) for t in u_data["transactions"]], default=0) + 1
+                    u_data["transactions"].append({"id": new_id, "type": t_t, "description": desc, "amount": v_v, "date": p_date, "status": "Paid", "ignoreBalance": True})
+                save_db(db_main)
+            st.rerun()
+            
     with s_config:
         if st.button("🚪 Sair da Conta"): st.session_state.logged_in = False; st.rerun()
         st.write("---")
